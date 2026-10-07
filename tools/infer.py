@@ -25,6 +25,7 @@ p.add_argument('--device', default='cpu')
 p.add_argument('--threads', type=int, default=8)
 p.add_argument('--batch-size', type=int, default=4)
 p.add_argument('--limit', type=int, help='first N images only (quick checks)')
+p.add_argument('--split', default='val', help="'train' re-infers training images (no augmentation) to measure fit")
 args = p.parse_args()
 torch.set_num_threads(args.threads)
 run = args.run.expanduser()
@@ -42,7 +43,7 @@ model.roi_heads.detections_per_img = args.detections
 model.to(args.device).eval()
 
 data = Path(train_args['data'])
-loader = DataLoader(SARMultiTask(data, 'val', limit=args.limit, log_input=train_args.get('log_input', False)), args.batch_size,
+loader = DataLoader(SARMultiTask(data, args.split, limit=args.limit, log_input=train_args.get('log_input', False)), args.batch_size,
                     num_workers=4, collate_fn=collate)
 detections, probs = [], {}
 with torch.no_grad():

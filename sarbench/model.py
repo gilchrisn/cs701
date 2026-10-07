@@ -79,6 +79,29 @@ def iou_or_nwd(a, b):
     return torch.maximum(box_iou(a, b), nwd_similarity(a, b))
 
 
+class SimilarityRoIHeads(RoIHeads):
+    """RoIHeads whose proposal-to-ground-truth matching uses self.box_similarity. torchvision 0.24's RoIHeads ignores
+    that attribute and always calls box_iou (its comment cites pytorch issue 27495); the RPN does use it. Same code as
+    torchvision's assign_targets_to_proposals otherwise. Used only with --nwd."""
+
+    def assign_targets_to_proposals(self, proposals, gt_boxes, gt_labels):
+        matched_idxs, labels = [], []
+        for proposals_in_image, gt_boxes_in_image, gt_labels_in_image in zip(proposals, gt_boxes, gt_labels):
+            if gt_boxes_in_image.numel() == 0:  # background image
+                device = proposals_in_image.device
+                clamped = torch.zeros((proposals_in_image.shape[0],), dtype=torch.int64, device=device)
+                labels_in_image = torch.zeros((proposals_in_image.shape[0],), dtype=torch.int64, device=device)
+            else:
+                matched = self.proposal_matcher(self.box_similarity(gt_boxes_in_image, proposals_in_image))
+                clamped = matched.clamp(min=0)
+                labels_in_image = gt_labels_in_image[clamped].to(dtype=torch.int64)
+                labels_in_image[matched == self.proposal_matcher.BELOW_LOW_THRESHOLD] = 0  # background
+                labels_in_image[matched == self.proposal_matcher.BETWEEN_THRESHOLDS] = -1  # ignored by the sampler
+            matched_idxs.append(clamped)
+            labels.append(labels_in_image)
+        return matched_idxs, labels
+
+
 class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
@@ -96,13 +119,13 @@ class MultiTaskModel(nn.Module):
             anchors, RPNHead(256, 6), fg_iou_thresh=0.7, bg_iou_thresh=0.3, batch_size_per_image=256,
             positive_fraction=0.5, pre_nms_top_n=dict(training=2000, testing=1000),
             post_nms_top_n=dict(training=2000, testing=1000), nms_thresh=0.7)
-        self.roi_heads = RoIHeads(
+        self.roi_heads = (SimilarityRoIHeads if nwd else RoIHeads)(
             MultiScaleRoIAlign(['0', '1', '2', '3'], output_size=7, sampling_ratio=2),
             TwoMLPHead(256 * 7 * 7, 1024), FastRCNNPredictor(1024, num_classes + 1),  # + 1: background
             fg_iou_thresh=0.5, bg_iou_thresh=0.5, batch_size_per_image=512, positive_fraction=0.25,
             bbox_reg_weights=None, score_thresh=0.05, nms_thresh=0.5, detections_per_img=100)
         self.spatial_prior = SpatialPrior() if spatial_prior else None
-        if nwd:  # matching anchors (RPN) and proposals (RoI heads) to ground truth by NWD instead of IoU
+        if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd
             self.roi_heads.box_similarity = iou_or_nwd
 
