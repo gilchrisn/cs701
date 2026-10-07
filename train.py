@@ -25,6 +25,7 @@ def parse_args():
     p.add_argument('--adapt', required=True, choices=['full', 'lora', 'moelora'])
     p.add_argument('--epochs', type=int, default=24)
     p.add_argument('--batch-size', type=int, default=16)
+    p.add_argument('--accum', type=int, default=1, help='gradient accumulation: --batch-size / --accum images per forward pass')
     p.add_argument('--lr', type=float, default=1e-4)
     p.add_argument('--backbone-lr', type=float, help='for the trainable backbone parameters (default: --lr)')
     p.add_argument('--weight-decay', type=float, default=0.05)
@@ -51,7 +52,7 @@ def make_loader(args, split):
     """Batches of `split`; only the training set is shuffled and augmented."""
     train = split == 'train'
     dataset = SARMultiTask(args.data, split, train=train, limit=args.limit)
-    return DataLoader(dataset, args.batch_size, shuffle=train, num_workers=args.workers, collate_fn=collate,
+    return DataLoader(dataset, args.batch_size // args.accum, shuffle=train, num_workers=args.workers, collate_fn=collate,
                       persistent_workers=train and args.workers > 0)  # training workers live across epochs
 
 
@@ -62,9 +63,10 @@ def lr_factor(step, warmup, total):
     return 0.5 * (1 + math.cos(math.pi * (step - warmup) / max(total - warmup, 1)))  # --epochs 1: no decay phase
 
 
-def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file):
+def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file, accum=1):
     """One pass over the training set; the loss is cross-entropy plus the four Faster R-CNN losses."""
     model.train()
+    optimizer.zero_grad()  # no gradient carried over from an incomplete accumulation group
     start, seen = time.time(), 0
     for step, (images, labels, targets) in enumerate(loader, 1):
         targets = [{'boxes': t['boxes'].cuda(), 'labels': t['labels'].cuda()} for t in targets]
@@ -72,10 +74,11 @@ def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file):
             logits, _, det_losses = model(images.cuda(), targets)
             losses = {'classification': F.cross_entropy(logits, labels.cuda()), **det_losses}
         loss = sum(losses.values())
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        schedule.step()
+        (loss / accum).backward()
+        if step % accum == 0:  # one optimizer step per --batch-size images
+            optimizer.step()
+            schedule.step()
+            optimizer.zero_grad()
         seen += len(images)
         if step % 50 == 0 or step == len(loader):
             parts = ' '.join(f'{name} {value.item():.3f}' for name, value in losses.items())
@@ -88,19 +91,21 @@ def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file):
 def evaluate(model, loader, gt_json):
     """Classification and COCO detection metrics on one split, and the detections in COCO result format."""
     model.eval()
-    labels, predicted, detections, image_ids = [], [], [], []
+    labels, predicted, detections, image_ids, probs = [], [], [], [], {}
     for images, y, targets in loader:
         with torch.autocast('cuda', dtype=torch.bfloat16):
             logits, outputs, _ = model(images.cuda())
         labels += y.tolist()
         predicted += logits.argmax(dim=1).tolist()
+        for target, pr in zip(targets, logits.float().softmax(dim=1).tolist()):
+            probs[target['image_id']] = pr  # class probabilities, kept for post-hoc analysis
         for target, out in zip(targets, outputs):
             image_ids.append(target['image_id'])
             boxes = to_original_xywh(out['boxes'], target['orig_size']).tolist()
             detections += [{'image_id': target['image_id'], 'category_id': c, 'bbox': b, 'score': s}
                            for b, c, s in zip(boxes, out['labels'].tolist(), out['scores'].tolist())]
     metrics = {**classification_metrics(labels, predicted), **detection_metrics(gt_json, detections, image_ids)}
-    return metrics, detections
+    return metrics, detections, probs
 
 
 def headline(metrics):
@@ -110,7 +115,7 @@ def headline(metrics):
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
-    run_dir = args.out / f'{args.backbone}_{args.init}_{args.adapt}'
+    run_dir = args.out
     run_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(run_dir / 'log.txt', 'w')
     log(json.dumps(vars(args), default=str), log_file)
@@ -132,21 +137,21 @@ def main():
     head_params = [p for name, p in model.named_parameters() if not name.startswith('backbone.')]
     optimizer = torch.optim.AdamW([{'params': backbone_params, 'lr': args.backbone_lr}, {'params': head_params}],
                                   lr=args.lr, weight_decay=args.weight_decay)
-    warmup, total = len(train_loader), args.epochs * len(train_loader)  # one epoch of warmup
+    warmup, total = len(train_loader) // args.accum, args.epochs * (len(train_loader) // args.accum)  # one epoch of warmup
     schedule = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: lr_factor(step, warmup, total))
 
     # Train, validating every --eval-every epochs; the reported model is the last-epoch model
     history, start = [], time.time()
     for epoch in range(1, args.epochs + 1):
-        train_one_epoch(model, train_loader, optimizer, schedule, epoch, log_file)
+        train_one_epoch(model, train_loader, optimizer, schedule, epoch, log_file, args.accum)
         if epoch % args.eval_every == 0 or epoch == args.epochs:
-            val, val_detections = evaluate(model, val_loader, args.data / 'detection' / 'instances_val.json')
+            val, val_detections, val_probs = evaluate(model, val_loader, args.data / 'detection' / 'instances_val.json')
             history.append({'epoch': epoch, **val})
             log(f'epoch {epoch} val: {headline(val)}', log_file)
     train_hours = (time.time() - start) / 3600
 
     # Evaluate on test, once
-    test, test_detections = evaluate(model, test_loader, args.data / 'detection' / 'instances_test.json')
+    test, test_detections, test_probs = evaluate(model, test_loader, args.data / 'detection' / 'instances_test.json')
     peak_gb = torch.cuda.max_memory_allocated() / 2**30
     log(f'test: {headline(test)}\ntraining {train_hours:.2f} h, peak GPU memory {peak_gb:.1f} GB', log_file)
 
@@ -157,6 +162,7 @@ def main():
     (run_dir / 'metrics.json').write_text(json.dumps(summary, indent=2, default=str))
     (run_dir / 'predictions_val.json').write_text(json.dumps(val_detections))
     (run_dir / 'predictions_test.json').write_text(json.dumps(test_detections))
+    (run_dir / 'class_probs_val.json').write_text(json.dumps(val_probs))
     torch.save(model.state_dict(), run_dir / 'model.pt')
 
 
