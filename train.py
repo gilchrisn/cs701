@@ -40,6 +40,7 @@ def parse_args():
     p.add_argument('--unfreeze-lr', type=float, default=2e-5, help='learning rate of the unfrozen pretrained weights')
     p.add_argument('--det-weight', type=float, default=1.0, help='weight of the Faster R-CNN losses vs cross-entropy')
     p.add_argument('--log-input', action='store_true', help='log-scale the 8-bit pixels before normalising')
+    p.add_argument('--copy-paste', action='store_true', help='paste copies of small objects within each training image')
     p.add_argument('--out', type=Path, default=Path('runs'))
     args = p.parse_args()
     if args.init == 'scratch' and args.adapt != 'full':
@@ -58,7 +59,8 @@ def log(message, file):
 def make_loader(args, split):
     """Batches of `split`; only the training set is shuffled and augmented."""
     train = split == 'train'
-    dataset = SARMultiTask(args.data, split, train=train, limit=args.limit, log_input=args.log_input)
+    dataset = SARMultiTask(args.data, split, train=train, limit=args.limit, log_input=args.log_input,
+                           copy_paste=args.copy_paste)
     return DataLoader(dataset, args.batch_size // args.accum, shuffle=train, num_workers=args.workers, collate_fn=collate,
                       persistent_workers=train and args.workers > 0)  # training workers live across epochs
 

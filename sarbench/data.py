@@ -26,7 +26,8 @@ class SARMultiTask(Dataset):
     An item is (image [1, size, size], label 0..8, target), target = {'boxes': XYXY on the resized
     image, 'labels': 1..9, 'image_id': COCO id, 'orig_size': (h, w)}."""
 
-    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False):
+    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False, copy_paste=False):
+        self.copy_paste = copy_paste and train
         self.root = Path(root)
         with open(self.root / 'classification' / f'{split}.csv') as f:
             self.rows = list(csv.DictReader(f))[:limit]
@@ -57,10 +58,47 @@ class SARMultiTask(Dataset):
         boxes = tv_tensors.BoundingBoxes([a['bbox'] for a in anns], format='XYWH', canvas_size=orig_size,
                                          dtype=torch.float32)  # integer boxes would be truncated by Resize
         image = Image.open(self.root / row['image']).convert('L')  # PIL: torchvision.io cannot read .bmp
+        labels = [a['category_id'] for a in anns]
+        if self.copy_paste:
+            image, boxes, labels = paste_small_objects(image, boxes, labels, orig_size)
         image, boxes = self.transform(image, boxes)
-        target = {'boxes': boxes, 'labels': torch.tensor([a['category_id'] for a in anns]),
+        target = {'boxes': boxes, 'labels': torch.tensor(labels),
                   'image_id': info['id'], 'orig_size': orig_size}
         return image, int(row['label']), target
+
+
+
+def paste_small_objects(image, boxes, labels, orig_size, p=0.5, max_side_frac=0.125, copies=3, tries=20):
+    """Optional (--copy-paste, training only). With probability p, copy up to `copies` small objects of THIS image
+    (box side <= max_side_frac of the image side, i.e. <= 64 px at 512) to random free spots of the same image, and add
+    their boxes. Same image, so the image class and the sensor's statistics stay right (after Kisantal et al. 2019,
+    "Augmentation for small object detection", which pasted with masks; we paste rectangles)."""
+    import random
+    if random.random() > p:
+        return image, boxes, labels
+    h, w = orig_size
+    xywh = boxes.tolist()
+    small = [k for k, (x, y, bw, bh) in enumerate(xywh) if max(bw, bh) <= max_side_frac * max(h, w) and bw >= 2 and bh >= 2]
+    if not small:
+        return image, boxes, labels
+    image = image.copy()
+    occupied = [list(b) for b in xywh]
+    new_boxes, new_labels = list(xywh), list(labels)
+    for k in random.sample(small, min(copies, len(small))):
+        x, y, bw, bh = xywh[k]
+        x0, y0, x1, y1 = int(x), int(y), int(round(x + bw)), int(round(y + bh))
+        patch = image.crop((x0, y0, x1, y1))
+        pw, ph = patch.size
+        for _ in range(tries):
+            nx, ny = random.randint(0, max(w - pw, 0)), random.randint(0, max(h - ph, 0))
+            if all(nx + pw <= ox or ox + ow <= nx or ny + ph <= oy or oy + oh <= ny for ox, oy, ow, oh in occupied):
+                image.paste(patch, (nx, ny))
+                occupied.append([nx, ny, pw, ph])
+                new_boxes.append([nx, ny, pw, ph])
+                new_labels.append(labels[k])
+                break
+    boxes = tv_tensors.BoundingBoxes(new_boxes, format='XYWH', canvas_size=orig_size, dtype=torch.float32)
+    return image, boxes, new_labels
 
 
 def collate(batch):
