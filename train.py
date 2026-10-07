@@ -36,6 +36,8 @@ def parse_args():
     # Candidate changes, each off by default (the reference model)
     p.add_argument('--spatial-prior', action='store_true', help='conv stem adding stride-4/8 detail to the neck')
     p.add_argument('--nwd', action='store_true', help='match anchors/proposals to ground truth by max(IoU, NWD)')
+    p.add_argument('--dynamic-rcnn', action='store_true',
+                   help='Dynamic R-CNN: RoI IoU threshold and smooth-L1 beta follow training statistics')
     p.add_argument('--unfreeze-last', type=int, default=0, help='also train the last N ViT blocks (with LoRA)')
     p.add_argument('--unfreeze-lr', type=float, default=2e-5, help='learning rate of the unfrozen pretrained weights')
     p.add_argument('--det-weight', type=float, default=1.0, help='weight of the Faster R-CNN losses vs cross-entropy')
@@ -143,7 +145,7 @@ def main():
     for blk in backbone.blocks[len(backbone.blocks) - args.unfreeze_last:] if args.unfreeze_last else []:
         blk.requires_grad_(True)  # partial fine-tuning of the last blocks, LoRA kept
     model = MultiTaskModel(backbone, task_routing=args.adapt == 'moelora', spatial_prior=args.spatial_prior,
-                           nwd=args.nwd).cuda()
+                           nwd=args.nwd, dynamic_rcnn=args.dynamic_rcnn).cuda()
     parameters = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'parameters: {parameters:,} total, {trainable:,} trainable', log_file)

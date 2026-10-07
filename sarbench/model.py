@@ -1,6 +1,7 @@
 """The multi-task model: one shared ViT backbone feeds a classification head and a Faster R-CNN detector."""
 from collections import OrderedDict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -102,10 +103,66 @@ class SimilarityRoIHeads(RoIHeads):
         return matched_idxs, labels
 
 
+class DynamicRoIHeads(SimilarityRoIHeads):
+    """Optional (--dynamic-rcnn). Dynamic R-CNN (Zhang et al., arXiv 2004.06002), ported from mmdetection's
+    DynamicRoIHead and its config (copies in ~/cs701-runs/lit/src/): every training forward records, per image, the
+    75th-largest IoU between proposals and ground truth, and the (10 x images)-th smallest mean |dx|, |dy| regression
+    target of the positives; every 100 forwards the RoI positive/negative IoU threshold becomes max(0.4, mean recorded
+    IoU) and the box loss's smooth-L1 beta becomes min(1.0, median recorded target). Starts at threshold 0.5 and beta
+    1.0 (torchvision's fixed beta is 1/9). Not ported: the config's RPN NMS 0.85. Threshold and beta are buffers, so
+    they survive --resume; the histories (at most 100 forwards) do not. Every update is printed."""
+    iou_topk, beta_topk, interval, initial_iou, initial_beta = 75, 10, 100, 0.4, 1.0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.register_buffer('dynamic_state', torch.tensor([self.proposal_matcher.high_threshold, self.initial_beta]))
+        self.iou_history, self.beta_history, self.forwards = [], [], 0
+
+    def assign_targets_to_proposals(self, proposals, gt_boxes, gt_labels):
+        thr = float(self.dynamic_state[0])
+        self.proposal_matcher.high_threshold = self.proposal_matcher.low_threshold = thr
+        cur = []
+        for props, gts in zip(proposals, gt_boxes):
+            if gts.numel():  # torchvision appends the ground truths to the proposals; mmdetection records without them
+                best = self.box_similarity(gts, props[:len(props) - len(gts)]).max(dim=0).values
+                cur.append(best.topk(min(self.iou_topk, len(best))).values[-1].item())
+        if cur:
+            self.iou_history.append(sum(cur) / len(cur))
+        return super().assign_targets_to_proposals(proposals, gt_boxes, gt_labels)
+
+    def forward(self, features, proposals, image_shapes, targets=None):
+        if not self.training:
+            return super().forward(features, proposals, image_shapes, targets)
+        proposals, _, labels, regression_targets = self.select_training_samples(proposals, targets)
+        box_features = self.box_head(self.box_roi_pool(features, proposals, image_shapes))
+        class_logits, box_regression = self.box_predictor(box_features)
+        num_images = len(labels)
+        labels, regression_targets = torch.cat(labels), torch.cat(regression_targets)
+        loss_classifier = F.cross_entropy(class_logits, labels)
+        pos = torch.where(labels > 0)[0]
+        box_regression = box_regression.reshape(len(labels), -1, 4)[pos, labels[pos]]
+        loss_box_reg = F.smooth_l1_loss(box_regression, regression_targets[pos], beta=float(self.dynamic_state[1]),
+                                        reduction='sum') / labels.numel()  # torchvision's fastrcnn_loss, beta varied
+        if len(pos):
+            err = regression_targets[pos, :2].abs().mean(dim=1)
+            self.beta_history.append(err.kthvalue(min(self.beta_topk * num_images, len(pos))).values.item())
+        self.forwards += 1
+        if self.forwards % self.interval == 0:
+            thr = max(self.initial_iou, sum(self.iou_history) / max(1, len(self.iou_history)))
+            beta = float(self.dynamic_state[1])
+            if self.beta_history and float(np.median(self.beta_history)) >= 1e-15:
+                beta = min(self.initial_beta, float(np.median(self.beta_history)))
+            self.dynamic_state.copy_(torch.tensor([thr, beta]))
+            self.iou_history, self.beta_history = [], []
+            print(f'dynamic-rcnn: forward {self.forwards} iou_thr {thr:.4f} beta {beta:.4f}', flush=True)
+        return [], {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg}
+
+
 class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
-    def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False):
+    def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
+                 dynamic_rcnn=False):
         super().__init__()
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
@@ -119,7 +176,7 @@ class MultiTaskModel(nn.Module):
             anchors, RPNHead(256, 6), fg_iou_thresh=0.7, bg_iou_thresh=0.3, batch_size_per_image=256,
             positive_fraction=0.5, pre_nms_top_n=dict(training=2000, testing=1000),
             post_nms_top_n=dict(training=2000, testing=1000), nms_thresh=0.7)
-        self.roi_heads = (SimilarityRoIHeads if nwd else RoIHeads)(
+        self.roi_heads = (DynamicRoIHeads if dynamic_rcnn else SimilarityRoIHeads if nwd else RoIHeads)(
             MultiScaleRoIAlign(['0', '1', '2', '3'], output_size=7, sampling_ratio=2),
             TwoMLPHead(256 * 7 * 7, 1024), FastRCNNPredictor(1024, num_classes + 1),  # + 1: background
             fg_iou_thresh=0.5, bg_iou_thresh=0.5, batch_size_per_image=512, positive_fraction=0.25,
