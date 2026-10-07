@@ -12,9 +12,9 @@ while true; do
   [ "$line" = "STOP" ] && break
   name=${line%% *}; args=${line#* }
   out="$RUNS/$name"; mkdir -p "$out"
-  { echo "commit $(git rev-parse HEAD)"; echo "dirty: $(git status --porcelain | tr '\n' ' ')";
-    echo "command: python train.py --data $HOME/cs701-data/holdout15_seed0 --out $out $args"; echo "start $(date -Is)"; } > "$out/provenance.txt"
-  ~/cs701-venv/bin/python train.py --data "$HOME/cs701-data/holdout15_seed0" --out "$out" $args > "$out/stdout.txt" 2>&1
+  { [ -f "$out/checkpoint.pt" ] && echo "RESUMING from checkpoint"; echo "commit $(git rev-parse HEAD)"; echo "dirty: $(git status --porcelain | tr '\n' ' ')";
+    echo "command: python train.py --data $HOME/cs701-data/holdout15_seed0 --out $out $args"; echo "start $(date -Is)"; } >> "$out/provenance.txt"
+  ~/cs701-venv/bin/python train.py --data "$HOME/cs701-data/holdout15_seed0" --out "$out" --resume $args >> "$out/stdout.txt" 2>&1
   echo "exit $? end $(date -Is)" >> "$out/provenance.txt"
   echo "$name" >> "$RUNS/done.txt"
 done

@@ -42,6 +42,7 @@ def parse_args():
     p.add_argument('--log-input', action='store_true', help='log-scale the 8-bit pixels before normalising')
     p.add_argument('--copy-paste', action='store_true', help='paste copies of small objects within each training image')
     p.add_argument('--out', type=Path, default=Path('runs'))
+    p.add_argument('--resume', action='store_true', help='continue from <out>/checkpoint.pt if it exists')
     args = p.parse_args()
     if args.init == 'scratch' and args.adapt != 'full':
         p.error('--init scratch is only valid with --adapt full')
@@ -127,7 +128,9 @@ def main():
     torch.manual_seed(args.seed)
     run_dir = args.out
     run_dir.mkdir(parents=True, exist_ok=True)
-    log_file = open(run_dir / 'log.txt', 'w')
+    ckpt_path = run_dir / 'checkpoint.pt'
+    resuming = args.resume and ckpt_path.exists()
+    log_file = open(run_dir / 'log.txt', 'a' if resuming else 'w')
     log(json.dumps(vars(args), default=str), log_file)
 
     # Data
@@ -158,14 +161,28 @@ def main():
     schedule = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: lr_factor(step, warmup, total))
 
     # Train, validating every --eval-every epochs; the reported model is the last-epoch model
-    history, start = [], time.time()
-    for epoch in range(1, args.epochs + 1):
+    history, start, first_epoch, done_seconds = [], time.time(), 1, 0.0
+    if resuming:  # a checkpoint is written after every epoch, so a crash loses at most one epoch
+        ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+        model.load_state_dict(ckpt['model'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        schedule.load_state_dict(ckpt['schedule'])
+        torch.set_rng_state(ckpt['rng'])
+        torch.cuda.set_rng_state(ckpt['cuda_rng'])
+        history, first_epoch, done_seconds = ckpt['history'], ckpt['epoch'] + 1, ckpt['train_seconds']
+        log(f'resumed after epoch {ckpt["epoch"]}', log_file)
+    for epoch in range(first_epoch, args.epochs + 1):
         train_one_epoch(model, train_loader, optimizer, schedule, epoch, log_file, args.accum, args.det_weight)
         if epoch % args.eval_every == 0 or epoch == args.epochs:
             val, val_detections, val_probs = evaluate(model, val_loader, args.data / 'detection' / 'instances_val.json')
             history.append({'epoch': epoch, **val})
             log(f'epoch {epoch} val: {headline(val)}', log_file)
-    train_hours = (time.time() - start) / 3600
+        tmp = run_dir / 'checkpoint.tmp'
+        torch.save({'epoch': epoch, 'model': model.state_dict(), 'optimizer': optimizer.state_dict(),
+                    'schedule': schedule.state_dict(), 'rng': torch.get_rng_state(), 'cuda_rng': torch.cuda.get_rng_state(),
+                    'history': history, 'train_seconds': done_seconds + time.time() - start}, tmp)
+        tmp.replace(ckpt_path)
+    train_hours = (done_seconds + time.time() - start) / 3600
 
     # Evaluate on test, once
     test, test_detections, test_probs = evaluate(model, test_loader, args.data / 'detection' / 'instances_test.json')
@@ -181,6 +198,7 @@ def main():
     (run_dir / 'predictions_test.json').write_text(json.dumps(test_detections))
     (run_dir / 'class_probs_val.json').write_text(json.dumps(val_probs))
     torch.save(model.state_dict(), run_dir / 'model.pt')
+    ckpt_path.unlink(missing_ok=True)  # the run is complete; model.pt is the result
 
 
 if __name__ == '__main__':
