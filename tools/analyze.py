@@ -229,6 +229,17 @@ def main(run):
     res['classification'] = {'accuracy': sum(cm[c][c] for c in range(len(cm))) / len(label), 'macro_f1': f1,
                              'per_class_f1': dict(zip(names, f1s)), 'confusion': cm}
 
+    # Image class from the detector instead: the class of the highest-scored detection (no detection: the classifier's)
+    top = {}
+    for x in dets:
+        if x['score'] > top.get(x['image_id'], (0, None))[0]:
+            top[x['image_id']] = (x['score'], x['category_id'] - 1)
+    cm_det = [[0] * len(names) for _ in names]
+    for iid, y in label.items():
+        cm_det[y][top[iid][1] if iid in top else int(np.argmax(probs[iid]))] += 1
+    res['classification']['detector_top_box'] = {'accuracy': sum(cm_det[c][c] for c in range(len(cm_det))) / len(label),
+                                                 'macro_f1': macro_f1(cm_det)[0]}
+
     # Oracles (mAP after fixing one error type) and label-free post-hoc fixes
     true_relabel = nms_per_image([{**x, 'category_id': label[x['image_id']] + 1} for x in dets])
     pred_relabel = nms_per_image([{**x, 'category_id': int(np.argmax(probs[x['image_id']])) + 1} for x in dets])
