@@ -233,15 +233,28 @@ def main(run):
     true_relabel = nms_per_image([{**x, 'category_id': label[x['image_id']] + 1} for x in dets])
     pred_relabel = nms_per_image([{**x, 'category_id': int(np.argmax(probs[x['image_id']])) + 1} for x in dets])
     rescored = [{**x, 'score': x['score'] * probs[x['image_id']][x['category_id'] - 1]} for x in dets]
+    rescored_pow = {k: [{**x, 'score': x['score'] * probs[x['image_id']][x['category_id'] - 1] ** k} for x in dets]
+                    for k in (0.5, 2.0)}  # s * p^k: k = 1 is the plain product
     g_miss, n_missed = oracle_miss(gt, dets)
     variants = {'cls': (gt, true_relabel), 'bkg': (gt, oracle_bkg(gt, dets)), 'loc': (gt, oracle_loc(gt, dets)),
                 'dupe': (gt, oracle_dupe(gt, dets)), 'miss': (g_miss, dets),
-                'posthoc_relabel_pred': (gt, pred_relabel), 'posthoc_rescore': (gt, rescored)}
+                'posthoc_relabel_pred': (gt, pred_relabel), 'posthoc_rescore': (gt, rescored),
+                'posthoc_rescore_p^0.5': (gt, rescored_pow[0.5]), 'posthoc_rescore_p^2': (gt, rescored_pow[2.0])}
     res['oracle_and_posthoc_mAP'] = {}
     for name, (g, d) in variants.items():
         s, _, _ = coco_eval(g, d)
         res['oracle_and_posthoc_mAP'][name] = {'mAP': float(s[0]), 'AP50': float(s[1]), 'dmAP': float(s[0] - stats[0])}
     res['n_gt_missed_iou0.1'] = n_missed
+    # AP by original image size (a proxy for the source dataset; tools/pixel_scale_check.py found 512 x 512 images on a
+    # linear scale and 256 x 256 images closer to a log scale)
+    res['by_image_size'] = {}
+    for lab, keep in [('512x512', lambda i: (i['width'], i['height']) == (512, 512)),
+                      ('256x256', lambda i: (i['width'], i['height']) == (256, 256))]:
+        ids = {i['id'] for i in gt['images'] if keep(i)}
+        g = {**gt, 'images': [i for i in gt['images'] if i['id'] in ids],
+             'annotations': [x for x in gt['annotations'] if x['image_id'] in ids]}
+        st, _, _ = coco_eval(g, [x for x in dets if x['image_id'] in ids])
+        res['by_image_size'][lab] = {'n_images': len(ids), 'mAP': float(st[0]), 'AP50': float(st[1])}
     res['tide_ap50'] = tide_dap(gt, dets)
     (run / 'analysis.json').write_text(json.dumps(res, indent=2))
 
@@ -251,6 +264,7 @@ def main(run):
     print('AP by box side at 512 input: ' + ', '.join(f"{k} {v['AP']:.3f} (n={v['n_gt']})" for k, v in res['by_side'].items()))
     print('per-class AP: ' + ', '.join(f'{k} {v:.3f}' for k, v in res['per_class_AP'].items()))
     print('mAP change if fixed / post-hoc: ' + ', '.join(f"{k} {v['dmAP']:+.4f}" for k, v in res['oracle_and_posthoc_mAP'].items()))
+    print('by image size: ' + ', '.join(f"{k} mAP {v['mAP']:.3f} (n={v['n_images']})" for k, v in res['by_image_size'].items()))
     print(f'ground truths missed entirely (no detection at IoU >= 0.1): {n_missed} of {res["n_gt"]}')
     print('TIDE (AP50-based) dAP:', json.dumps(res['tide_ap50']))
 
