@@ -9,7 +9,7 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 from torchvision.models.detection.image_list import ImageList
 from torchvision.models.detection.roi_heads import RoIHeads
 from torchvision.models.detection.rpn import RegionProposalNetwork, RPNHead
-from torchvision.ops import MultiScaleRoIAlign
+from torchvision.ops import MultiScaleRoIAlign, box_iou
 
 from .adapters import set_task
 
@@ -72,6 +72,13 @@ def nwd_similarity(a, b, c=16.0):
     return torch.exp(-w2.clamp(min=0).sqrt() / c)
 
 
+def iou_or_nwd(a, b):
+    """max(IoU, NWD): NWD alone (c = 16) gives boxes over 32 px almost no positive anchors (84 % none, measured by
+    tools/anchor_coverage.py); the max keeps IoU matching for large boxes and adds NWD positives for tiny ones.
+    This combination is ours, not from the NWD paper."""
+    return torch.maximum(box_iou(a, b), nwd_similarity(a, b))
+
+
 class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
@@ -96,8 +103,8 @@ class MultiTaskModel(nn.Module):
             bbox_reg_weights=None, score_thresh=0.05, nms_thresh=0.5, detections_per_img=100)
         self.spatial_prior = SpatialPrior() if spatial_prior else None
         if nwd:  # matching anchors (RPN) and proposals (RoI heads) to ground truth by NWD instead of IoU
-            self.rpn.box_similarity = nwd_similarity
-            self.roi_heads.box_similarity = nwd_similarity
+            self.rpn.box_similarity = iou_or_nwd
+            self.roi_heads.box_similarity = iou_or_nwd
 
     def forward(self, images, targets=None):
         """images [B, 1, H, W], targets: per-image {'boxes' XYXY, 'labels' 1..9} (training only) ->

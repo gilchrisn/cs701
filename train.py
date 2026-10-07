@@ -35,7 +35,7 @@ def parse_args():
     p.add_argument('--seed', type=int, default=0)
     # Candidate changes, each off by default (the reference model)
     p.add_argument('--spatial-prior', action='store_true', help='conv stem adding stride-4/8 detail to the neck')
-    p.add_argument('--nwd', action='store_true', help='match anchors/proposals to ground truth by NWD, not IoU')
+    p.add_argument('--nwd', action='store_true', help='match anchors/proposals to ground truth by max(IoU, NWD)')
     p.add_argument('--unfreeze-last', type=int, default=0, help='also train the last N ViT blocks (with LoRA)')
     p.add_argument('--unfreeze-lr', type=float, default=2e-5, help='learning rate of the unfrozen pretrained weights')
     p.add_argument('--det-weight', type=float, default=1.0, help='weight of the Faster R-CNN losses vs cross-entropy')
