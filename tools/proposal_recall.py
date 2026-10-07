@@ -34,7 +34,7 @@ if train_args['adapt'] != 'full':
     add_adapters(backbone, train_args['adapt'])
 model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora',
                        spatial_prior=train_args.get('spatial_prior', False), nwd=train_args.get('nwd', False),
-                       dynamic_rcnn=train_args.get('dynamic_rcnn', False))
+                       dynamic_rcnn=train_args.get('dynamic_rcnn', False), cascade=train_args.get('cascade', False))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.to(args.device).eval()
 captured = {}

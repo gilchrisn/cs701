@@ -1,6 +1,8 @@
 """The multi-task model: one shared ViT backbone feeds a classification head and a Faster R-CNN detector."""
 from collections import OrderedDict
 
+import contextlib
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -8,7 +10,10 @@ from torch import nn
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 from torchvision.models.detection.image_list import ImageList
+from torchvision.models.detection import _utils as det_utils
+from torchvision.models.detection import roi_heads as roi_heads_module
 from torchvision.models.detection.roi_heads import RoIHeads
+from torchvision.ops import boxes as box_ops
 from torchvision.models.detection.rpn import RegionProposalNetwork, RPNHead
 from torchvision.ops import MultiScaleRoIAlign, box_iou
 
@@ -158,11 +163,94 @@ class DynamicRoIHeads(SimilarityRoIHeads):
         return [], {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg}
 
 
+class AgnosticPredictor(nn.Module):
+    """Class scores (num_classes + 1) and ONE class-agnostic box delta per RoI, as in Cascade R-CNN's later stages."""
+
+    def __init__(self, in_channels, num_classes):
+        super().__init__()
+        self.cls_score, self.bbox_pred = nn.Linear(in_channels, num_classes), nn.Linear(in_channels, 4)
+
+    def forward(self, x):
+        x = x.flatten(start_dim=1)
+        return self.cls_score(x), self.bbox_pred(x)
+
+
+class CascadeRoIHeads(RoIHeads):
+    """Optional (--cascade). Cascade R-CNN (Cai & Vasconcelos, arXiv 1712.00726) with ONE extra stage (the paper and
+    mmdetection's cascade-rcnn_r50_fpn config use three stages at IoU 0.5 / 0.6 / 0.7; two extra 2-fc heads, ~28 M,
+    would break the 130 M total budget). Stage 1 is the unchanged reference head (IoU 0.5, class-specific deltas).
+    Its boxes, refined with the assigned class (training) or the top foreground class, become stage 2's proposals:
+    IoU 0.6, its own 2-fc head (~13.9 M), class-agnostic deltas with box-coder weights (20, 20, 10, 10) (mmdetection's
+    stage-2 target_stds 0.05 / 0.1), loss weight 0.5 (mmdetection's stage_loss_weights). Ground-truth boxes appended
+    as stage-1 proposals are dropped before refinement and re-added by stage 2 (mmdetection: pos_is_gts). Test: the
+    class logits of both stages are averaged (mmdetection: _refine_roi) and boxes come from stage 2. Kept from
+    torchvision rather than mmdetection: smooth-L1 beta 1/9 and default initialisation, as in stage 1."""
+    stage2_iou, stage2_weights, stage2_loss_weight = 0.6, (20.0, 20.0, 10.0, 10.0), 0.5
+
+    def __init__(self, *args, num_classes=10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.box_head2 = TwoMLPHead(256 * 7 * 7, 1024)
+        self.box_predictor2 = AgnosticPredictor(1024, num_classes)
+        self.matcher2 = det_utils.Matcher(self.stage2_iou, self.stage2_iou, allow_low_quality_matches=False)
+        self.box_coder2 = det_utils.BoxCoder(self.stage2_weights)
+
+    @contextlib.contextmanager
+    def _stage2(self):
+        """Make torchvision's select_training_samples / postprocess_detections use stage 2's matcher and box coder."""
+        saved = self.proposal_matcher, self.box_coder
+        self.proposal_matcher, self.box_coder = self.matcher2, self.box_coder2
+        try:
+            yield
+        finally:
+            self.proposal_matcher, self.box_coder = saved
+
+    def _refine(self, proposals, logits, deltas, image_shapes, labels=None, gt_boxes=None):
+        """Stage-1 boxes for each RoI: the assigned class's deltas (training positives) or the top foreground class's."""
+        boxes = self.box_coder.decode(deltas, proposals).reshape(len(logits), -1, 4)
+        cls = logits[:, 1:].argmax(dim=1) + 1
+        if labels is not None:
+            assigned = torch.cat(labels)
+            cls = torch.where(assigned > 0, assigned, cls)
+        refined = boxes[torch.arange(len(boxes), device=boxes.device), cls].split([len(p) for p in proposals])
+        out = []
+        for i, (r, shape) in enumerate(zip(refined, image_shapes)):
+            r = box_ops.clip_boxes_to_image(r.detach(), shape)
+            if gt_boxes is not None and len(gt_boxes[i]):
+                r = r[box_iou(proposals[i], gt_boxes[i]).max(dim=1).values < 0.9999]  # drop appended ground truths
+            out.append(r)
+        return out
+
+    def forward(self, features, proposals, image_shapes, targets=None):
+        n_cls = self.box_predictor2.cls_score.out_features
+        if self.training:
+            proposals, _, labels, regression_targets = self.select_training_samples(proposals, targets)
+        logits1, deltas1 = self.box_predictor(self.box_head(self.box_roi_pool(features, proposals, image_shapes)))
+        with torch.no_grad():
+            refined = self._refine(proposals, logits1, deltas1, image_shapes,
+                                   labels if self.training else None,
+                                   [t['boxes'] for t in targets] if self.training else None)
+        if self.training:
+            loss_classifier, loss_box_reg = roi_heads_module.fastrcnn_loss(logits1, deltas1, labels, regression_targets)
+            with self._stage2():
+                refined, _, labels2, targets2 = self.select_training_samples(refined, targets)
+        logits2, deltas2 = self.box_predictor2(self.box_head2(self.box_roi_pool(features, refined, image_shapes)))
+        if self.training:
+            loss_cls2, loss_box2 = roi_heads_module.fastrcnn_loss(logits2, deltas2.repeat(1, n_cls), labels2, targets2)
+            w = self.stage2_loss_weight
+            return [], {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
+                        'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
+        # test: stage-1 logits on the RPN proposals, stage-2 logits and boxes on the refined proposals
+        with self._stage2():
+            boxes, scores, labels = self.postprocess_detections((logits1 + logits2) / 2, deltas2.repeat(1, n_cls),
+                                                                refined, image_shapes)
+        return [{'boxes': b, 'labels': l, 'scores': s} for b, s, l in zip(boxes, scores, labels)], {}
+
+
 class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
-                 dynamic_rcnn=False):
+                 dynamic_rcnn=False, cascade=False):
         super().__init__()
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
@@ -176,7 +264,9 @@ class MultiTaskModel(nn.Module):
             anchors, RPNHead(256, 6), fg_iou_thresh=0.7, bg_iou_thresh=0.3, batch_size_per_image=256,
             positive_fraction=0.5, pre_nms_top_n=dict(training=2000, testing=1000),
             post_nms_top_n=dict(training=2000, testing=1000), nms_thresh=0.7)
-        self.roi_heads = (DynamicRoIHeads if dynamic_rcnn else SimilarityRoIHeads if nwd else RoIHeads)(
+        heads = (CascadeRoIHeads if cascade else DynamicRoIHeads if dynamic_rcnn else
+                 SimilarityRoIHeads if nwd else RoIHeads)  # at most one of the three options at a time
+        self.roi_heads = heads(
             MultiScaleRoIAlign(['0', '1', '2', '3'], output_size=7, sampling_ratio=2),
             TwoMLPHead(256 * 7 * 7, 1024), FastRCNNPredictor(1024, num_classes + 1),  # + 1: background
             fg_iou_thresh=0.5, bg_iou_thresh=0.5, batch_size_per_image=512, positive_fraction=0.25,
