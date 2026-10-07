@@ -2,6 +2,7 @@
 Loads images and boxes at a fixed input size and maps predicted boxes back to original pixels."""
 import csv
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from torchvision.transforms import v2
 # Mean and std of all pixels of the 9,392 train images, read as gray, resized to
 # 512 x 512 and scaled to [0, 1] (computed once).
 MEAN, STD = 0.2526, 0.2133
+# Optional (--log-input): pixels x in [0, 1] mapped to log1p(255 x) / log1p(255), which turns multiplicative speckle
+# into additive noise; mean and std of that over our 7,984 training images at 512 px.
+LOG_MEAN, LOG_STD = 0.6588, 0.2300
 
 
 class SARMultiTask(Dataset):
@@ -22,7 +26,7 @@ class SARMultiTask(Dataset):
     An item is (image [1, size, size], label 0..8, target), target = {'boxes': XYXY on the resized
     image, 'labels': 1..9, 'image_id': COCO id, 'orig_size': (h, w)}."""
 
-    def __init__(self, root, split, train=False, size=512, limit=None):
+    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False):
         self.root = Path(root)
         with open(self.root / 'classification' / f'{split}.csv') as f:
             self.rows = list(csv.DictReader(f))[:limit]
@@ -38,7 +42,8 @@ class SARMultiTask(Dataset):
             v2.Resize((size, size)),  # stretches non-square images; boxes are scaled with the pixels
             *flips,  # overhead imagery has no canonical "up"
             v2.ToDtype(torch.float32, scale=True),
-            v2.Normalize([MEAN], [STD]),
+            *([v2.Lambda(lambda x: torch.log1p(255 * x) / math.log1p(255))] if log_input else []),
+            v2.Normalize([LOG_MEAN], [LOG_STD]) if log_input else v2.Normalize([MEAN], [STD]),
         ])
 
     def __len__(self):

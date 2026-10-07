@@ -37,10 +37,45 @@ class SimpleFeaturePyramid(nn.Module):
         return OrderedDict(zip(['0', '1', '2', '3', 'pool'], levels))
 
 
+class SpatialPrior(nn.Module):
+    """Optional (--spatial-prior). A light convolutional stem on the input image, after the spatial prior module of
+    ViT-Adapter (Chen et al., ICLR 2023): maps at strides 4 and 8 with detail finer than one 16 px patch, added to the
+    neck's stride-4 and stride-8 maps. The output projections start at zero: training starts from the reference model."""
+
+    def __init__(self, channels=256, width=64):
+        super().__init__()
+
+        def block(c_in, c_out, stride):
+            return nn.Sequential(nn.Conv2d(c_in, c_out, 3, stride, 1, bias=False), nn.GroupNorm(16, c_out), nn.ReLU(inplace=True))
+
+        self.stem = nn.Sequential(block(1, width, 2), block(width, width, 1), block(width, width, 2))  # stride 4
+        self.down = block(width, 2 * width, 2)  # stride 8
+        self.out4, self.out8 = nn.Conv2d(width, channels, 1), nn.Conv2d(2 * width, channels, 1)
+        for conv in (self.out4, self.out8):
+            nn.init.zeros_(conv.weight)
+            nn.init.zeros_(conv.bias)
+
+    def forward(self, images):
+        f4 = self.stem(images)
+        return self.out4(f4), self.out8(self.down(f4))
+
+
+def nwd_similarity(a, b, c=16.0):
+    """Optional (--nwd). Normalized Gaussian Wasserstein distance (Wang et al., arXiv 2110.13389) between XYXY boxes:
+    a box is the Gaussian N(centre, diag(w^2/4, h^2/4)); W2^2 = |centre_a - centre_b|^2 + |(w_a, h_a)/2 - (w_b, h_b)/2|^2;
+    similarity = exp(-W2 / c). c = 16 px, the median box side at 512 input (the paper uses the mean size of its all-tiny
+    dataset; our mean, 35.7 px, is pulled up by airports). Replaces IoU only where anchors/proposals are matched to
+    ground truth in training; NMS and evaluation still use IoU."""
+    ca, cb = (a[:, :2] + a[:, 2:]) / 2, (b[:, :2] + b[:, 2:]) / 2
+    ha, hb = (a[:, 2:] - a[:, :2]) / 2, (b[:, 2:] - b[:, :2]) / 2
+    w2 = ((ca[:, None] - cb[None]) ** 2).sum(-1) + ((ha[:, None] - hb[None]) ** 2).sum(-1)
+    return torch.exp(-w2.clamp(min=0).sqrt() / c)
+
+
 class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
-    def __init__(self, backbone, task_routing: bool, num_classes=9):
+    def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False):
         super().__init__()
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
@@ -59,6 +94,10 @@ class MultiTaskModel(nn.Module):
             TwoMLPHead(256 * 7 * 7, 1024), FastRCNNPredictor(1024, num_classes + 1),  # + 1: background
             fg_iou_thresh=0.5, bg_iou_thresh=0.5, batch_size_per_image=512, positive_fraction=0.25,
             bbox_reg_weights=None, score_thresh=0.05, nms_thresh=0.5, detections_per_img=100)
+        self.spatial_prior = SpatialPrior() if spatial_prior else None
+        if nwd:  # matching anchors (RPN) and proposals (RoI heads) to ground truth by NWD instead of IoU
+            self.rpn.box_similarity = nwd_similarity
+            self.roi_heads.box_similarity = nwd_similarity
 
     def forward(self, images, targets=None):
         """images [B, 1, H, W], targets: per-image {'boxes' XYXY, 'labels' 1..9} (training only) ->
@@ -71,6 +110,9 @@ class MultiTaskModel(nn.Module):
             tokens = self.backbone(images)
         h, w = images.shape[-2] // 16, images.shape[-1] // 16  # one token per 16 x 16 patch
         features = self.neck(tokens.transpose(1, 2).unflatten(2, (h, w)))  # tokens as a [B, 768, h, w] map
+        if self.spatial_prior is not None:
+            p4, p8 = self.spatial_prior(images)
+            features['0'], features['1'] = features['0'] + p4, features['1'] + p8
         # Precision rule: the box coder casts anchors to the dtype of the regression output, so in bf16 every
         # coordinate near 512 would snap to a 2 px grid. RPN and RoIHeads therefore run in fp32.
         with torch.autocast(images.device.type, enabled=False):

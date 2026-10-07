@@ -33,6 +33,13 @@ def parse_args():
     p.add_argument('--workers', type=int, default=8)
     p.add_argument('--limit', type=int, help='use only the first N images of every split (quick checks)')
     p.add_argument('--seed', type=int, default=0)
+    # Candidate changes, each off by default (the reference model)
+    p.add_argument('--spatial-prior', action='store_true', help='conv stem adding stride-4/8 detail to the neck')
+    p.add_argument('--nwd', action='store_true', help='match anchors/proposals to ground truth by NWD, not IoU')
+    p.add_argument('--unfreeze-last', type=int, default=0, help='also train the last N ViT blocks (with LoRA)')
+    p.add_argument('--unfreeze-lr', type=float, default=2e-5, help='learning rate of the unfrozen pretrained weights')
+    p.add_argument('--det-weight', type=float, default=1.0, help='weight of the Faster R-CNN losses vs cross-entropy')
+    p.add_argument('--log-input', action='store_true', help='log-scale the 8-bit pixels before normalising')
     p.add_argument('--out', type=Path, default=Path('runs'))
     args = p.parse_args()
     if args.init == 'scratch' and args.adapt != 'full':
@@ -51,7 +58,7 @@ def log(message, file):
 def make_loader(args, split):
     """Batches of `split`; only the training set is shuffled and augmented."""
     train = split == 'train'
-    dataset = SARMultiTask(args.data, split, train=train, limit=args.limit)
+    dataset = SARMultiTask(args.data, split, train=train, limit=args.limit, log_input=args.log_input)
     return DataLoader(dataset, args.batch_size // args.accum, shuffle=train, num_workers=args.workers, collate_fn=collate,
                       persistent_workers=train and args.workers > 0)  # training workers live across epochs
 
@@ -63,7 +70,7 @@ def lr_factor(step, warmup, total):
     return 0.5 * (1 + math.cos(math.pi * (step - warmup) / max(total - warmup, 1)))  # --epochs 1: no decay phase
 
 
-def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file, accum=1):
+def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file, accum=1, det_weight=1.0):
     """One pass over the training set; the loss is cross-entropy plus the four Faster R-CNN losses."""
     model.train()
     optimizer.zero_grad()  # no gradient carried over from an incomplete accumulation group
@@ -73,7 +80,8 @@ def train_one_epoch(model, loader, optimizer, schedule, epoch, log_file, accum=1
         with torch.autocast('cuda', dtype=torch.bfloat16):  # bf16 has fp32's range: no loss scaling needed
             logits, _, det_losses = model(images.cuda(), targets)
             losses = {'classification': F.cross_entropy(logits, labels.cuda()), **det_losses}
-        loss = sum(losses.values())
+        loss = sum(losses.values()) if det_weight == 1 else \
+            losses['classification'] + det_weight * sum(v for k, v in losses.items() if k != 'classification')
         (loss / accum).backward()
         if step % accum == 0:  # one optimizer step per --batch-size images
             optimizer.step()
@@ -127,23 +135,30 @@ def main():
     backbone = build_backbone(args.backbone, pretrained=args.init == 'pretrained')
     if args.adapt != 'full':
         add_adapters(backbone, args.adapt)  # also freezes the backbone
-    model = MultiTaskModel(backbone, task_routing=args.adapt == 'moelora').cuda()
+    for blk in backbone.blocks[len(backbone.blocks) - args.unfreeze_last:] if args.unfreeze_last else []:
+        blk.requires_grad_(True)  # partial fine-tuning of the last blocks, LoRA kept
+    model = MultiTaskModel(backbone, task_routing=args.adapt == 'moelora', spatial_prior=args.spatial_prior,
+                           nwd=args.nwd).cuda()
     parameters = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'parameters: {parameters:,} total, {trainable:,} trainable', log_file)
 
     # Optimizer and schedule: trainable backbone parameters at --backbone-lr, all new modules at --lr
-    backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
+    is_unfrozen = lambda name: args.adapt != 'full' and '.down.' not in name and '.up.' not in name and 'router' not in name
+    backbone_params = [p for n, p in model.backbone.named_parameters() if p.requires_grad and not is_unfrozen(n)]
+    unfrozen_params = [p for n, p in model.backbone.named_parameters() if p.requires_grad and is_unfrozen(n)]
     head_params = [p for name, p in model.named_parameters() if not name.startswith('backbone.')]
-    optimizer = torch.optim.AdamW([{'params': backbone_params, 'lr': args.backbone_lr}, {'params': head_params}],
-                                  lr=args.lr, weight_decay=args.weight_decay)
+    groups = [{'params': backbone_params, 'lr': args.backbone_lr}, {'params': head_params}]
+    if unfrozen_params:
+        groups.append({'params': unfrozen_params, 'lr': args.unfreeze_lr})
+    optimizer = torch.optim.AdamW(groups, lr=args.lr, weight_decay=args.weight_decay)
     warmup, total = len(train_loader) // args.accum, args.epochs * (len(train_loader) // args.accum)  # one epoch of warmup
     schedule = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: lr_factor(step, warmup, total))
 
     # Train, validating every --eval-every epochs; the reported model is the last-epoch model
     history, start = [], time.time()
     for epoch in range(1, args.epochs + 1):
-        train_one_epoch(model, train_loader, optimizer, schedule, epoch, log_file, args.accum)
+        train_one_epoch(model, train_loader, optimizer, schedule, epoch, log_file, args.accum, args.det_weight)
         if epoch % args.eval_every == 0 or epoch == args.epochs:
             val, val_detections, val_probs = evaluate(model, val_loader, args.data / 'detection' / 'instances_val.json')
             history.append({'epoch': epoch, **val})
