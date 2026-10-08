@@ -258,10 +258,12 @@ class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
-                 dynamic_rcnn=False, cascade=False):
+                 dynamic_rcnn=False, cascade=False, nwd_rpn=False):
         super().__init__()
         if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
             raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
+        if nwd and nwd_rpn:
+            raise ValueError('nwd already includes nwd_rpn')
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
         self.cls_head = nn.Sequential(nn.LayerNorm(backbone.embed_dim), nn.Linear(backbone.embed_dim, num_classes))
@@ -285,6 +287,8 @@ class MultiTaskModel(nn.Module):
         if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd
             self.roi_heads.box_similarity = iou_or_nwd
+        if nwd_rpn:  # anchors only (the NWD paper's recommended placement, arXiv 2110.13389 sec. 5); RoI heads keep IoU
+            self.rpn.box_similarity = iou_or_nwd
 
     def forward(self, images, targets=None):
         """images [B, 1, H, W], targets: per-image {'boxes' XYXY, 'labels' 1..9} (training only) ->
