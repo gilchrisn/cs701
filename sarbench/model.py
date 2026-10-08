@@ -188,6 +188,7 @@ class CascadeRoIHeads(RoIHeads):
     class logits of both stages are averaged (mmdetection: _refine_roi) and boxes come from stage 2. Kept from
     torchvision rather than mmdetection: smooth-L1 beta 1/9 and default initialisation, as in stage 1."""
     stage2_iou, stage2_weights, stage2_loss_weight = 0.6, (20.0, 20.0, 10.0, 10.0), 0.5
+    test_boxes, test_logits = 'stage2', 'mean'  # inference-only ablations (tools/infer.py); defaults = the method
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -242,9 +243,14 @@ class CascadeRoIHeads(RoIHeads):
             return [], {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
                         'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
         # test: stage-1 logits on the RPN proposals, stage-2 logits and boxes on the refined proposals
-        with self._stage2():
-            boxes, scores, labels = self.postprocess_detections((logits1 + logits2) / 2, deltas2.repeat(1, n_cls),
-                                                                refined, image_shapes)
+        # (at test time refined[i] has one row per proposals[i] row, so the two stages' rows correspond)
+        logits = {'mean': (logits1 + logits2) / 2, 'stage1': logits1, 'stage2': logits2}[self.test_logits]
+        if self.test_boxes == 'stage1':
+            boxes, scores, labels = self.postprocess_detections(logits, deltas1, proposals, image_shapes)
+        else:
+            with self._stage2():
+                boxes, scores, labels = self.postprocess_detections(logits, deltas2.repeat(1, n_cls),
+                                                                    refined, image_shapes)
         return [{'boxes': b, 'labels': l, 'scores': s} for b, s, l in zip(boxes, scores, labels)], {}
 
 

@@ -26,6 +26,8 @@ p.add_argument('--threads', type=int, default=8)
 p.add_argument('--batch-size', type=int, default=4)
 p.add_argument('--limit', type=int, help='first N images only (quick checks)')
 p.add_argument('--split', default='val', help="'train' re-infers training images (no augmentation) to measure fit")
+p.add_argument('--cascade-test-boxes', choices=['stage1', 'stage2'], default='stage2')
+p.add_argument('--cascade-test-logits', choices=['stage1', 'stage2', 'mean'], default='mean')
 args = p.parse_args()
 torch.set_num_threads(args.threads)
 run = args.run.expanduser()
@@ -41,6 +43,8 @@ model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.roi_heads.score_thresh = args.score_thresh
 model.roi_heads.nms_thresh = args.nms_thresh
 model.roi_heads.detections_per_img = args.detections
+if train_args.get('cascade', False):
+    model.roi_heads.test_boxes, model.roi_heads.test_logits = args.cascade_test_boxes, args.cascade_test_logits
 model.to(args.device).eval()
 
 data = Path(train_args['data'])
