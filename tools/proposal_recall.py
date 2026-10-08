@@ -3,7 +3,8 @@ NMS) and over the final detections of the same class, binned by box side at 512 
 Fig. 1c (arXiv 1712.00726): every proposal with IoU >= 0.3 to some ground truth is assigned to it, the RoI head
 regresses it for that ground truth's class, and output IoU is compared with input IoU per input-IoU bin and box size
 (output > input = the regressor improves boxes); the head's softmax probability of the true class per bin shows whether
-well-placed proposals are scored high enough (below 0.05 they are dropped before NMS). Writes <run>/proposal_recall.json.
+well-placed proposals are scored high enough (below 0.05 they are dropped before NMS). For --cascade runs this
+section measures stage 1 only; the detection-IoU section measures the final (stage-2) boxes. Writes <run>/proposal_recall.json.
 Example: python tools/proposal_recall.py ~/cs701-runs/2026-10-08_ref_s0 --device cuda"""
 import argparse
 import json

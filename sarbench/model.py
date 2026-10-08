@@ -128,7 +128,9 @@ class DynamicRoIHeads(SimilarityRoIHeads):
         self.proposal_matcher.high_threshold = self.proposal_matcher.low_threshold = thr
         cur = []
         for props, gts in zip(proposals, gt_boxes):
-            if gts.numel():  # torchvision appends the ground truths to the proposals; mmdetection records without them
+            if gts.numel():  # torchvision appends the ground truths; excluded here (mmdetection's sampler adds them
+                # with IoU 1 before this statistic, a negligible shift at K = 75). Measured on this data (ref s0 RPN,
+                # 96 training images): the 75th-largest IoU averages 0.25, so the threshold sits at the 0.4 floor.
                 best = self.box_similarity(gts, props[:len(props) - len(gts)]).max(dim=0).values
                 cur.append(best.topk(min(self.iou_topk, len(best))).values[-1].item())
         if cur:
@@ -187,10 +189,10 @@ class CascadeRoIHeads(RoIHeads):
     torchvision rather than mmdetection: smooth-L1 beta 1/9 and default initialisation, as in stage 1."""
     stage2_iou, stage2_weights, stage2_loss_weight = 0.6, (20.0, 20.0, 10.0, 10.0), 0.5
 
-    def __init__(self, *args, num_classes=10, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.box_head2 = TwoMLPHead(256 * 7 * 7, 1024)
-        self.box_predictor2 = AgnosticPredictor(1024, num_classes)
+        self.box_predictor2 = AgnosticPredictor(1024, self.box_predictor.cls_score.out_features)
         self.matcher2 = det_utils.Matcher(self.stage2_iou, self.stage2_iou, allow_low_quality_matches=False)
         self.box_coder2 = det_utils.BoxCoder(self.stage2_weights)
 
@@ -252,6 +254,8 @@ class MultiTaskModel(nn.Module):
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
                  dynamic_rcnn=False, cascade=False):
         super().__init__()
+        if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
+            raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
         self.cls_head = nn.Sequential(nn.LayerNorm(backbone.embed_dim), nn.Linear(backbone.embed_dim, num_classes))
