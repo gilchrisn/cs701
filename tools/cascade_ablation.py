@@ -33,7 +33,8 @@ assert train_args.get('cascade'), 'not a --cascade run'
 backbone = build_backbone(train_args['backbone'], pretrained=False)
 if train_args['adapt'] != 'full':
     add_adapters(backbone, train_args['adapt'])
-model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora', cascade=True)
+model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora', cascade=True,
+                       nwd_rpn=train_args.get('nwd_rpn', False), iou_score=train_args.get('iou_score', False))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.to(args.device).eval()
 captured = {}

@@ -28,6 +28,7 @@ p.add_argument('--limit', type=int, help='first N images only (quick checks)')
 p.add_argument('--split', default='val', help="'train' re-infers training images (no augmentation) to measure fit")
 p.add_argument('--cascade-test-boxes', choices=['stage1', 'stage2'], default='stage2')
 p.add_argument('--cascade-test-logits', choices=['stage1', 'stage2', 'mean'], default='mean')
+p.add_argument('--no-iou-score', action='store_true', help='--iou-score runs: class probability only (ablation)')
 args = p.parse_args()
 torch.set_num_threads(args.threads)
 run = args.run.expanduser()
@@ -39,13 +40,15 @@ if train_args['adapt'] != 'full':
 model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora',
                        spatial_prior=train_args.get('spatial_prior', False), nwd=train_args.get('nwd', False),
                        nwd_rpn=train_args.get('nwd_rpn', False),
-                       dynamic_rcnn=train_args.get('dynamic_rcnn', False), cascade=train_args.get('cascade', False))
+                       dynamic_rcnn=train_args.get('dynamic_rcnn', False), cascade=train_args.get('cascade', False),
+                       iou_score=train_args.get('iou_score', False))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.roi_heads.score_thresh = args.score_thresh
 model.roi_heads.nms_thresh = args.nms_thresh
 model.roi_heads.detections_per_img = args.detections
 if train_args.get('cascade', False):
     model.roi_heads.test_boxes, model.roi_heads.test_logits = args.cascade_test_boxes, args.cascade_test_logits
+    model.roi_heads.test_iou_score = not args.no_iou_score
 model.to(args.device).eval()
 
 data = Path(train_args['data'])

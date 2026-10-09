@@ -189,6 +189,14 @@ class CascadeRoIHeads(RoIHeads):
     torchvision rather than mmdetection: smooth-L1 beta 1/9 and default initialisation, as in stage 1."""
     stage2_iou, stage2_weights, stage2_loss_weight = 0.6, (20.0, 20.0, 10.0, 10.0), 0.5
     test_boxes, test_logits = 'stage2', 'mean'  # inference-only ablations (tools/infer.py); defaults = the method
+    test_iou_score = True  # --iou-score runs only; False = class probability alone (ablation)
+
+    def enable_iou_branch(self):
+        """Optional (--iou-score). IoU-Net's IoU predictor, joint variant only (Jiang et al., arXiv 1807.11590; their
+        IoU-guided NMS and refinement need a separately trained network / Precise RoI Pooling, so they are left out).
+        One Linear on the stage-2 fc features predicts the IoU of the stage-2 box with its matched ground truth (BCE on
+        stage-2 positives, detached target, weight = stage2_loss_weight). Test: class probability x predicted IoU."""
+        self.iou_pred = nn.Linear(self.box_predictor2.cls_score.in_features, 1)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -196,6 +204,7 @@ class CascadeRoIHeads(RoIHeads):
         self.box_predictor2 = AgnosticPredictor(1024, self.box_predictor.cls_score.out_features)
         self.matcher2 = det_utils.Matcher(self.stage2_iou, self.stage2_iou, allow_low_quality_matches=False)
         self.box_coder2 = det_utils.BoxCoder(self.stage2_weights)
+        self.iou_pred = None  # set in __init__, not on the class: a class attribute would hide the submodule
 
     @contextlib.contextmanager
     def _stage2(self):
@@ -223,6 +232,19 @@ class CascadeRoIHeads(RoIHeads):
             out.append(r)
         return out
 
+    def _iou_loss(self, fc2, deltas2, refined, matched2, labels2, targets):
+        """BCE between the predicted IoU and the (detached) IoU of each stage-2 positive's decoded box with its GT."""
+        pos = torch.cat(labels2) > 0
+        boxes = self.box_coder2.decode(deltas2.detach(), refined).reshape(-1, 4)
+        gts = torch.cat([t['boxes'][m] if len(t['boxes']) else torch.zeros(len(m), 4, device=m.device)
+                         for t, m in zip(targets, matched2)])
+        lt, rb = torch.maximum(boxes[:, :2], gts[:, :2]), torch.minimum(boxes[:, 2:], gts[:, 2:])
+        inter = (rb - lt).clamp(min=0).prod(dim=1)
+        iou = inter / (box_ops.box_area(boxes) + box_ops.box_area(gts) - inter).clamp(min=1e-6)
+        if not pos.any():
+            return fc2.sum() * 0
+        return F.binary_cross_entropy_with_logits(self.iou_pred(fc2[pos]).squeeze(1), iou[pos].detach())
+
     def forward(self, features, proposals, image_shapes, targets=None):
         n_cls = self.box_predictor2.cls_score.out_features
         if self.training:
@@ -235,16 +257,25 @@ class CascadeRoIHeads(RoIHeads):
         if self.training:
             loss_classifier, loss_box_reg = roi_heads_module.fastrcnn_loss(logits1, deltas1, labels, regression_targets)
             with self._stage2():
-                refined, _, labels2, targets2 = self.select_training_samples(refined, targets)
-        logits2, deltas2 = self.box_predictor2(self.box_head2(self.box_roi_pool(features, refined, image_shapes)))
+                refined, matched2, labels2, targets2 = self.select_training_samples(refined, targets)
+        fc2 = self.box_head2(self.box_roi_pool(features, refined, image_shapes))
+        logits2, deltas2 = self.box_predictor2(fc2)
         if self.training:
             loss_cls2, loss_box2 = roi_heads_module.fastrcnn_loss(logits2, deltas2.repeat(1, n_cls), labels2, targets2)
             w = self.stage2_loss_weight
-            return [], {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
-                        'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
+            losses = {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
+                      'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
+            if self.iou_pred is not None:
+                losses['loss_iou_stage2'] = w * self._iou_loss(fc2, deltas2, refined, matched2, labels2, targets)
+            return [], losses
         # test: stage-1 logits on the RPN proposals, stage-2 logits and boxes on the refined proposals
         # (at test time refined[i] has one row per proposals[i] row, so the two stages' rows correspond)
         logits = {'mean': (logits1 + logits2) / 2, 'stage1': logits1, 'stage2': logits2}[self.test_logits]
+        if self.iou_pred is not None and self.test_iou_score:
+            # foreground probabilities p_c -> p_c * IoU and background -> 1 - IoU * (1 - p_bg): the rows still sum to
+            # 1, so torchvision's softmax inside postprocess_detections returns exactly p_c * IoU for every class
+            p, iou = logits.softmax(dim=1), self.iou_pred(fc2).sigmoid()
+            logits = torch.cat([1 - iou * (1 - p[:, :1]), p[:, 1:] * iou], dim=1).clamp_min(1e-12).log()
         if self.test_boxes == 'stage1':
             boxes, scores, labels = self.postprocess_detections(logits, deltas1, proposals, image_shapes)
         else:
@@ -258,12 +289,14 @@ class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
-                 dynamic_rcnn=False, cascade=False, nwd_rpn=False):
+                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False):
         super().__init__()
         if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
             raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
         if nwd and nwd_rpn:
             raise ValueError('nwd already includes nwd_rpn')
+        if iou_score and not cascade:
+            raise ValueError('iou_score is implemented on the Cascade stage-2 head only')
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
         self.cls_head = nn.Sequential(nn.LayerNorm(backbone.embed_dim), nn.Linear(backbone.embed_dim, num_classes))
@@ -283,6 +316,8 @@ class MultiTaskModel(nn.Module):
             TwoMLPHead(256 * 7 * 7, 1024), FastRCNNPredictor(1024, num_classes + 1),  # + 1: background
             fg_iou_thresh=0.5, bg_iou_thresh=0.5, batch_size_per_image=512, positive_fraction=0.25,
             bbox_reg_weights=None, score_thresh=0.05, nms_thresh=0.5, detections_per_img=100)
+        if iou_score:
+            self.roi_heads.enable_iou_branch()
         self.spatial_prior = SpatialPrior() if spatial_prior else None
         if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd

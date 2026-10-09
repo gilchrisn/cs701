@@ -37,6 +37,7 @@ def parse_args():
     p.add_argument('--spatial-prior', action='store_true', help='conv stem adding stride-4/8 detail to the neck')
     p.add_argument('--nwd', action='store_true', help='match anchors/proposals to ground truth by max(IoU, NWD)')
     p.add_argument('--nwd-rpn', action='store_true', help='max(IoU, NWD) for RPN anchors only; RoI heads keep IoU')
+    p.add_argument('--iou-score', action='store_true', help='with --cascade: IoU-Net branch, score = p_cls x IoU')
     p.add_argument('--dynamic-rcnn', action='store_true',
                    help='Dynamic R-CNN: RoI IoU threshold and smooth-L1 beta follow training statistics')
     p.add_argument('--cascade', action='store_true', help='Cascade R-CNN with one extra RoI stage at IoU 0.6')
@@ -148,7 +149,7 @@ def main():
         blk.requires_grad_(True)  # partial fine-tuning of the last blocks, LoRA kept
     model = MultiTaskModel(backbone, task_routing=args.adapt == 'moelora', spatial_prior=args.spatial_prior,
                            nwd=args.nwd, nwd_rpn=args.nwd_rpn, dynamic_rcnn=args.dynamic_rcnn,
-                           cascade=args.cascade).cuda()
+                           cascade=args.cascade, iou_score=args.iou_score).cuda()
     parameters = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'parameters: {parameters:,} total, {trainable:,} trainable', log_file)
