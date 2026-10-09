@@ -94,6 +94,8 @@ if train_args.get('cascade', False):
     if args.sigma_t is not None:
         model.roi_heads.sigma_t = args.sigma_t
 assert args.box_vote is None or args.var_vote is None, 'choose one voting rule'
+assert not (train_args.get('kl_loss') and (args.box_vote is not None or args.var_vote is not None)), \
+    '--kl-loss runs vote inside the model (_var_vote); use --sigma-t / --no-var-vote instead'
 if args.box_vote is not None or args.var_vote is not None:
     model.roi_heads.postprocess_detections = types.MethodType(postprocess_with_voting, model.roi_heads)
 model.to(args.device).eval()

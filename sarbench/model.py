@@ -242,7 +242,8 @@ class CascadeRoIHeads(RoIHeads):
             keep = box_ops.batched_nms(b[idx], s, labels, self.nms_thresh)[: self.detections_per_img]
             iou = box_iou(b[idx[keep]], b[idx])
             p = ((iou > 0) & (labels[keep, None] == labels[None, :])) * torch.exp(-(1 - iou) ** 2 / self.sigma_t)
-            w = p[:, :, None] / v[idx][None]  # [kept, candidates, 4]
+            # [kept, candidates, 4]; zero weight where p = 0, so one degenerate variance cannot NaN unrelated boxes
+            w = torch.where(p[:, :, None] > 0, p[:, :, None] / v[idx][None].clamp_min(1e-12), 0.0)
             all_boxes.append((w * b[idx][None]).sum(dim=1) / w.sum(dim=1))
             all_scores.append(s[keep])
             all_labels.append(labels[keep])
