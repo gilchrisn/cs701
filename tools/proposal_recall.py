@@ -4,7 +4,8 @@ Fig. 1c (arXiv 1712.00726): every proposal with IoU >= 0.3 to some ground truth 
 regresses it for that ground truth's class, and output IoU is compared with input IoU per input-IoU bin and box size
 (output > input = the regressor improves boxes); the head's softmax probability of the true class per bin shows whether
 well-placed proposals are scored high enough (below 0.05 they are dropped before NMS). For --cascade runs this
-section measures stage 1 only; the detection-IoU section measures the final (stage-2) boxes. Writes <run>/proposal_recall.json.
+section measures stage 1, and the same proposals are also passed through the stage-2 head alone
+(regression_stage2_by_input_iou); the detection-IoU section measures the final (stage-2) boxes. Writes <run>/proposal_recall.json.
 Example: python tools/proposal_recall.py ~/cs701-runs/2026-10-08_ref_s0 --device cuda"""
 import argparse
 import json
@@ -48,6 +49,7 @@ model.roi_heads.register_forward_pre_hook(lambda mod, inp: captured.update(featu
 data = SARMultiTask(Path(train_args['data']), 'val', limit=args.limit, log_input=train_args.get('log_input', False))
 rows = []  # (side at 512 input, best proposal IoU, best same-class detection IoU)
 regress_rows = []  # (side of the assigned ground truth, proposal IoU, IoU after regression, true-class probability)
+regress2_rows = []  # --cascade runs: the same proposals through the stage-2 head alone (side, proposal IoU, output IoU)
 heads = model.roi_heads
 with torch.no_grad():
     for images, _, targets in DataLoader(data, args.batch_size, num_workers=4, collate_fn=collate):
@@ -65,8 +67,8 @@ with torch.no_grad():
             if keep.any():
                 chosen = props[keep.to(props.device)].float()
                 feats = {k: v[i:i + 1].float() for k, v in captured['features'].items()}
-                logits, deltas = heads.box_predictor(heads.box_head(heads.box_roi_pool(feats, [chosen],
-                                                                                   [captured['sizes'][i]])))
+                pooled = heads.box_roi_pool(feats, [chosen], [captured['sizes'][i]])
+                logits, deltas = heads.box_predictor(heads.box_head(pooled))
                 cls = t['labels'][owner[keep]].to(chosen.device)
                 ar = torch.arange(len(chosen))
                 out_boxes = heads.box_coder.decode(deltas, [chosen]).reshape(len(chosen), -1, 4)[ar, cls].float().cpu()
@@ -74,6 +76,11 @@ with torch.no_grad():
                 prob = logits.float().softmax(dim=1)[ar, cls].cpu()
                 regress_rows += list(zip(side[owner[keep]].tolist(), in_iou[keep].tolist(), out_iou.tolist(),
                                          prob.tolist()))
+                if hasattr(heads, 'box_head2'):  # Cascade R-CNN Fig. 1c per stage: same inputs, stage-2 regressor
+                    _, deltas2 = heads.box_predictor2(heads.box_head2(pooled))
+                    out2 = heads.box_coder2.decode(deltas2, [chosen]).reshape(len(chosen), 4).float().cpu()
+                    out2_iou = box_iou(out2, gt).gather(1, owner[keep][:, None]).squeeze(1)
+                    regress2_rows += list(zip(side[owner[keep]].tolist(), in_iou[keep].tolist(), out2_iou.tolist()))
             det_boxes, det_labels = out['boxes'].float().cpu(), out['labels'].cpu()
             iou = box_iou(gt, det_boxes) if len(det_boxes) else torch.zeros(len(gt), 0)
             same = t['labels'][:, None] == det_labels[None]
@@ -99,9 +106,18 @@ for lab, lo, hi in bins:
             res['regression_by_input_iou'][f'{lab} in[{a},{min(b, 1.0)})'] = {
                 'n': len(r), 'input_iou_mean': float(r[:, 1].mean()), 'output_iou_mean': float(r[:, 2].mean()),
                 'true_class_prob_mean': float(r[:, 3].mean()), 'true_class_prob<0.05': float((r[:, 3] < 0.05).mean())}
+if regress2_rows:
+    rr2 = np.array(regress2_rows)
+    res['regression_stage2_by_input_iou'] = {}
+    for lab, lo, hi in bins:
+        for a, b in [(0.3, 0.5), (0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.01)]:
+            r = rr2[(rr2[:, 0] >= lo) & (rr2[:, 0] < hi) & (rr2[:, 1] >= a) & (rr2[:, 1] < b)]
+            if len(r):
+                res['regression_stage2_by_input_iou'][f'{lab} in[{a},{min(b, 1.0)})'] = {
+                    'n': len(r), 'input_iou_mean': float(r[:, 1].mean()), 'output_iou_mean': float(r[:, 2].mean())}
 (run / 'proposal_recall.json').write_text(json.dumps(res, indent=2))
 for lab, v in res.items():
-    if lab == 'regression_by_input_iou':
+    if lab.startswith('regression'):
         continue
     print(f"{lab:>6} n={v['n_gt']:5d}  proposal IoU median {v['proposal_iou_median']:.2f} (>=.5 {v['proposal_iou>=0.5']:.0%}, "
           f">=.7 {v['proposal_iou>=0.7']:.0%})  detection IoU median {v['detection_iou_median']:.2f} "
@@ -112,3 +128,7 @@ print('RoI head on proposals, by box side and input IoU: n, mean input IoU -> me
 for k, v in res['regression_by_input_iou'].items():
     print(f"  {k:>20} n={v['n']:6d}  {v['input_iou_mean']:.3f} -> {v['output_iou_mean']:.3f}  "
           f"prob {v['true_class_prob_mean']:.2f} (< 0.05: {v['true_class_prob<0.05']:.0%})")
+if regress2_rows:
+    print('Stage-2 head alone on the same proposals: n, mean input IoU -> mean output IoU')
+    for k, v in res['regression_stage2_by_input_iou'].items():
+        print(f"  {k:>20} n={v['n']:6d}  {v['input_iou_mean']:.3f} -> {v['output_iou_mean']:.3f}")
