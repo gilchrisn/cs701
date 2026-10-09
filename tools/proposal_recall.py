@@ -37,7 +37,8 @@ model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora',
                        spatial_prior=train_args.get('spatial_prior', False), nwd=train_args.get('nwd', False),
                        nwd_rpn=train_args.get('nwd_rpn', False),
                        dynamic_rcnn=train_args.get('dynamic_rcnn', False), cascade=train_args.get('cascade', False),
-                       iou_score=train_args.get('iou_score', False))
+                       iou_score=train_args.get('iou_score', False),
+                       kl_loss=train_args.get('kl_loss', False))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.to(args.device).eval()
 captured = {}

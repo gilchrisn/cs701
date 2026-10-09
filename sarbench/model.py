@@ -165,6 +165,17 @@ class DynamicRoIHeads(SimilarityRoIHeads):
         return [], {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg}
 
 
+def kl_box_loss(deltas, alpha, labels, regression_targets):
+    """KL-Loss box term (He et al., arXiv 1809.08545, smooth-L1 form): e^-α · smoothL1(Δ) + α/2 per positive delta, with
+    torchvision's fastrcnn_loss beta (1/9) and normalisation (sum over positives / all sampled RoIs), so α = 0 gives
+    exactly torchvision's box loss. deltas/alpha: [N, 4 * classes] (class-specific) or [N, 4] (class-agnostic)."""
+    labels, targets = torch.cat(labels), torch.cat(regression_targets)
+    pos, n = torch.where(labels > 0)[0], len(labels)
+    pick = lambda t: t.reshape(n, -1, 4)[pos, labels[pos]] if t.shape[1] > 4 else t[pos]
+    a = pick(alpha)
+    return (torch.exp(-a) * F.smooth_l1_loss(pick(deltas), targets[pos], beta=1 / 9, reduction='none') + a / 2).sum() / n
+
+
 class AgnosticPredictor(nn.Module):
     """Class scores (num_classes + 1) and ONE class-agnostic box delta per RoI, as in Cascade R-CNN's later stages."""
 
@@ -190,6 +201,52 @@ class CascadeRoIHeads(RoIHeads):
     stage2_iou, stage2_weights, stage2_loss_weight = 0.6, (20.0, 20.0, 10.0, 10.0), 0.5
     test_boxes, test_logits = 'stage2', 'mean'  # inference-only ablations (tools/infer.py); defaults = the method
     test_iou_score = True  # --iou-score runs only; False = class probability alone (ablation)
+    sigma_t, test_var_vote = 0.02, True  # --kl-loss runs only: "We set σt to 0.02" (1809.08545); False = no voting
+
+    def enable_kl_loss(self):
+        """Optional (--kl-loss). KL-Loss (He et al., arXiv 1809.08545): both box regressors also predict α = log σ² for
+        each delta they output (stage 1: per class and coordinate; stage 2: per coordinate) and train with
+        kl_box_loss instead of smooth-L1. The α layers start at weight N(0, 1e-4), bias 0, so α ≈ 0 and the loss starts
+        equal to the current one plus a constant. Test: variance voting on stage-2 boxes after NMS (_var_vote)."""
+        n_cls = self.box_predictor.cls_score.out_features
+        self.kl_alpha1, self.kl_alpha2 = nn.Linear(1024, 4 * n_cls), nn.Linear(1024, 4)
+        for layer in (self.kl_alpha1, self.kl_alpha2):
+            nn.init.normal_(layer.weight, std=1e-4)
+            nn.init.zeros_(layer.bias)
+
+    def _var_vote(self, logits, deltas, alpha, proposals, image_shapes):
+        """torchvision's postprocess_detections for class-agnostic stage-2 deltas, plus variance voting after NMS:
+        each kept box = sum_j p_j x_j / σ_j² / sum_j p_j / σ_j² per corner coordinate, over same-class candidates j with
+        IoU > 0, p_j = exp(-(1 - IoU)² / σt); scores unchanged. torchvision predicts (dx, dy, dw, dh), not corners, so
+        corner variances come from the first-order delta method: var(x1) = (w_prop / wx)² σ²_dx + (w_box / (2 ww))² σ²_dw
+        (the box coder divides each delta by its weight; x1 = cx - w / 2)."""
+        sizes, props = [len(p) for p in proposals], torch.cat(proposals)
+        boxes = self.box_coder2.decode(deltas, proposals).reshape(-1, 4)
+        wx, wy, ww, wh = self.box_coder2.weights
+        var = alpha.exp()
+        var_x = ((props[:, 2] - props[:, 0]) / wx) ** 2 * var[:, 0] + ((boxes[:, 2] - boxes[:, 0]) / (2 * ww)) ** 2 * var[:, 2]
+        var_y = ((props[:, 3] - props[:, 1]) / wy) ** 2 * var[:, 1] + ((boxes[:, 3] - boxes[:, 1]) / (2 * wh)) ** 2 * var[:, 3]
+        corner_var = torch.stack([var_x, var_y, var_x, var_y], dim=1)
+        all_boxes, all_scores, all_labels = [], [], []
+        for b, v, s, shape in zip(boxes.split(sizes), corner_var.split(sizes), F.softmax(logits, -1).split(sizes),
+                                  image_shapes):
+            b = box_ops.clip_boxes_to_image(b, shape)
+            n, c = s.shape
+            labels = torch.arange(1, c, device=s.device).repeat(n)  # same order as torchvision's flatten of [:, 1:]
+            idx = torch.arange(n, device=s.device).repeat_interleave(c - 1)
+            s = s[:, 1:].reshape(-1)
+            keep = torch.where(s > self.score_thresh)[0]
+            idx, s, labels = idx[keep], s[keep], labels[keep]
+            keep = box_ops.remove_small_boxes(b[idx], min_size=1e-2)
+            idx, s, labels = idx[keep], s[keep], labels[keep]
+            keep = box_ops.batched_nms(b[idx], s, labels, self.nms_thresh)[: self.detections_per_img]
+            iou = box_iou(b[idx[keep]], b[idx])
+            p = ((iou > 0) & (labels[keep, None] == labels[None, :])) * torch.exp(-(1 - iou) ** 2 / self.sigma_t)
+            w = p[:, :, None] / v[idx][None]  # [kept, candidates, 4]
+            all_boxes.append((w * b[idx][None]).sum(dim=1) / w.sum(dim=1))
+            all_scores.append(s[keep])
+            all_labels.append(labels[keep])
+        return all_boxes, all_scores, all_labels
 
     def enable_iou_branch(self):
         """Optional (--iou-score). IoU-Net's IoU predictor, joint variant only (Jiang et al., arXiv 1807.11590; their
@@ -205,6 +262,7 @@ class CascadeRoIHeads(RoIHeads):
         self.matcher2 = det_utils.Matcher(self.stage2_iou, self.stage2_iou, allow_low_quality_matches=False)
         self.box_coder2 = det_utils.BoxCoder(self.stage2_weights)
         self.iou_pred = None  # set in __init__, not on the class: a class attribute would hide the submodule
+        self.kl_alpha1 = self.kl_alpha2 = None  # likewise (enable_kl_loss)
 
     @contextlib.contextmanager
     def _stage2(self):
@@ -249,19 +307,24 @@ class CascadeRoIHeads(RoIHeads):
         n_cls = self.box_predictor2.cls_score.out_features
         if self.training:
             proposals, _, labels, regression_targets = self.select_training_samples(proposals, targets)
-        logits1, deltas1 = self.box_predictor(self.box_head(self.box_roi_pool(features, proposals, image_shapes)))
+        fc1 = self.box_head(self.box_roi_pool(features, proposals, image_shapes))
+        logits1, deltas1 = self.box_predictor(fc1)
         with torch.no_grad():
             refined = self._refine(proposals, logits1, deltas1, image_shapes,
                                    labels if self.training else None,
                                    [t['boxes'] for t in targets] if self.training else None)
         if self.training:
             loss_classifier, loss_box_reg = roi_heads_module.fastrcnn_loss(logits1, deltas1, labels, regression_targets)
+            if self.kl_alpha1 is not None:
+                loss_box_reg = kl_box_loss(deltas1, self.kl_alpha1(fc1), labels, regression_targets)
             with self._stage2():
                 refined, matched2, labels2, targets2 = self.select_training_samples(refined, targets)
         fc2 = self.box_head2(self.box_roi_pool(features, refined, image_shapes))
         logits2, deltas2 = self.box_predictor2(fc2)
         if self.training:
             loss_cls2, loss_box2 = roi_heads_module.fastrcnn_loss(logits2, deltas2.repeat(1, n_cls), labels2, targets2)
+            if self.kl_alpha2 is not None:
+                loss_box2 = kl_box_loss(deltas2, self.kl_alpha2(fc2), labels2, targets2)
             w = self.stage2_loss_weight
             losses = {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
                       'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
@@ -278,6 +341,8 @@ class CascadeRoIHeads(RoIHeads):
             logits = torch.cat([1 - iou * (1 - p[:, :1]), p[:, 1:] * iou], dim=1).clamp_min(1e-12).log()
         if self.test_boxes == 'stage1':
             boxes, scores, labels = self.postprocess_detections(logits, deltas1, proposals, image_shapes)
+        elif self.kl_alpha2 is not None and self.test_var_vote:
+            boxes, scores, labels = self._var_vote(logits, deltas2, self.kl_alpha2(fc2), refined, image_shapes)
         else:
             with self._stage2():
                 boxes, scores, labels = self.postprocess_detections(logits, deltas2.repeat(1, n_cls),
@@ -289,7 +354,7 @@ class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
-                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False):
+                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False, kl_loss=False):
         super().__init__()
         if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
             raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
@@ -297,6 +362,8 @@ class MultiTaskModel(nn.Module):
             raise ValueError('nwd already includes nwd_rpn')
         if iou_score and not cascade:
             raise ValueError('iou_score is implemented on the Cascade stage-2 head only')
+        if kl_loss and not cascade:
+            raise ValueError('kl_loss is implemented on the Cascade RoI heads only')
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
         self.cls_head = nn.Sequential(nn.LayerNorm(backbone.embed_dim), nn.Linear(backbone.embed_dim, num_classes))
@@ -318,6 +385,8 @@ class MultiTaskModel(nn.Module):
             bbox_reg_weights=None, score_thresh=0.05, nms_thresh=0.5, detections_per_img=100)
         if iou_score:
             self.roi_heads.enable_iou_branch()
+        if kl_loss:
+            self.roi_heads.enable_kl_loss()
         self.spatial_prior = SpatialPrior() if spatial_prior else None
         if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd

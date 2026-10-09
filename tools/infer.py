@@ -32,6 +32,8 @@ p.add_argument('--split', default='val', help="'train' re-infers training images
 p.add_argument('--cascade-test-boxes', choices=['stage1', 'stage2'], default='stage2')
 p.add_argument('--cascade-test-logits', choices=['stage1', 'stage2', 'mean'], default='mean')
 p.add_argument('--no-iou-score', action='store_true', help='--iou-score runs: class probability only (ablation)')
+p.add_argument('--no-var-vote', action='store_true', help='--kl-loss runs: stage-2 boxes without voting (ablation)')
+p.add_argument('--sigma-t', type=float, help='--kl-loss runs: variance-voting sigma_t (default 0.02)')
 p.add_argument('--box-vote', type=float, metavar='IOU',
                help='after NMS, replace each kept box by the score-weighted mean of the same-class pre-NMS candidates '
                     'with IoU >= IOU to it (box voting, Gidaris & Komodakis arXiv 1505.01749); scores unchanged')
@@ -79,7 +81,8 @@ model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora',
                        spatial_prior=train_args.get('spatial_prior', False), nwd=train_args.get('nwd', False),
                        nwd_rpn=train_args.get('nwd_rpn', False),
                        dynamic_rcnn=train_args.get('dynamic_rcnn', False), cascade=train_args.get('cascade', False),
-                       iou_score=train_args.get('iou_score', False))
+                       iou_score=train_args.get('iou_score', False),
+                       kl_loss=train_args.get('kl_loss', False))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.roi_heads.score_thresh = args.score_thresh
 model.roi_heads.nms_thresh = args.nms_thresh
@@ -87,6 +90,9 @@ model.roi_heads.detections_per_img = args.detections
 if train_args.get('cascade', False):
     model.roi_heads.test_boxes, model.roi_heads.test_logits = args.cascade_test_boxes, args.cascade_test_logits
     model.roi_heads.test_iou_score = not args.no_iou_score
+    model.roi_heads.test_var_vote = not args.no_var_vote
+    if args.sigma_t is not None:
+        model.roi_heads.sigma_t = args.sigma_t
 assert args.box_vote is None or args.var_vote is None, 'choose one voting rule'
 if args.box_vote is not None or args.var_vote is not None:
     model.roi_heads.postprocess_detections = types.MethodType(postprocess_with_voting, model.roi_heads)
