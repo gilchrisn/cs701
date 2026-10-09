@@ -35,11 +35,15 @@ p.add_argument('--no-iou-score', action='store_true', help='--iou-score runs: cl
 p.add_argument('--box-vote', type=float, metavar='IOU',
                help='after NMS, replace each kept box by the score-weighted mean of the same-class pre-NMS candidates '
                     'with IoU >= IOU to it (box voting, Gidaris & Komodakis arXiv 1505.01749); scores unchanged')
+p.add_argument('--var-vote', type=float, metavar='SIGMA_T',
+               help='after NMS, replace each kept box by the mean of the same-class pre-NMS candidates with IoU > 0, '
+                    'weighted by exp(-(1-IoU)^2/SIGMA_T) (KL-Loss variance voting, arXiv 1809.08545, with all box '
+                    'variances equal); scores unchanged')
 args = p.parse_args()
 
 
 def postprocess_with_voting(self, class_logits, box_regression, proposals, image_shapes):
-    """torchvision RoIHeads.postprocess_detections (0.2x) with one added step after NMS: box voting."""
+    """torchvision RoIHeads.postprocess_detections (0.2x) with one added step after NMS: box or variance voting."""
     num_classes = class_logits.shape[-1]
     pred_boxes = self.box_coder.decode(box_regression, proposals).split([len(b) for b in proposals], 0)
     pred_scores = F.softmax(class_logits, -1).split([len(b) for b in proposals], 0)
@@ -53,7 +57,11 @@ def postprocess_with_voting(self, class_logits, box_regression, proposals, image
         keep = box_ops.remove_small_boxes(boxes, min_size=1e-2)
         boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
         keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)[: self.detections_per_img]
-        w = ((box_ops.box_iou(boxes[keep], boxes) >= args.box_vote) & (labels[keep, None] == labels[None, :])) * scores
+        iou, same = box_ops.box_iou(boxes[keep], boxes), labels[keep, None] == labels[None, :]
+        if args.box_vote is not None:
+            w = ((iou >= args.box_vote) & same) * scores
+        else:
+            w = ((iou > 0) & same) * torch.exp(-(1 - iou) ** 2 / args.var_vote)
         voted = (w @ boxes) / w.sum(dim=1, keepdim=True)  # each kept box is its own neighbour, so the sum is > 0
         all_boxes.append(voted)
         all_scores.append(scores[keep])
@@ -79,7 +87,8 @@ model.roi_heads.detections_per_img = args.detections
 if train_args.get('cascade', False):
     model.roi_heads.test_boxes, model.roi_heads.test_logits = args.cascade_test_boxes, args.cascade_test_logits
     model.roi_heads.test_iou_score = not args.no_iou_score
-if args.box_vote is not None:
+assert args.box_vote is None or args.var_vote is None, 'choose one voting rule'
+if args.box_vote is not None or args.var_vote is not None:
     model.roi_heads.postprocess_detections = types.MethodType(postprocess_with_voting, model.roi_heads)
 model.to(args.device).eval()
 
