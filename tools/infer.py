@@ -4,10 +4,13 @@ Example: python tools/infer.py ~/cs701-runs/2026-10-08_ref_s0 --tag score0.001 -
 import argparse
 import json
 import sys
+import types
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torchvision.ops import boxes as box_ops
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sarbench.adapters import add_adapters  # noqa: E402
@@ -29,7 +32,34 @@ p.add_argument('--split', default='val', help="'train' re-infers training images
 p.add_argument('--cascade-test-boxes', choices=['stage1', 'stage2'], default='stage2')
 p.add_argument('--cascade-test-logits', choices=['stage1', 'stage2', 'mean'], default='mean')
 p.add_argument('--no-iou-score', action='store_true', help='--iou-score runs: class probability only (ablation)')
+p.add_argument('--box-vote', type=float, metavar='IOU',
+               help='after NMS, replace each kept box by the score-weighted mean of the same-class pre-NMS candidates '
+                    'with IoU >= IOU to it (box voting, Gidaris & Komodakis arXiv 1505.01749); scores unchanged')
 args = p.parse_args()
+
+
+def postprocess_with_voting(self, class_logits, box_regression, proposals, image_shapes):
+    """torchvision RoIHeads.postprocess_detections (0.2x) with one added step after NMS: box voting."""
+    num_classes = class_logits.shape[-1]
+    pred_boxes = self.box_coder.decode(box_regression, proposals).split([len(b) for b in proposals], 0)
+    pred_scores = F.softmax(class_logits, -1).split([len(b) for b in proposals], 0)
+    all_boxes, all_scores, all_labels = [], [], []
+    for boxes, scores, image_shape in zip(pred_boxes, pred_scores, image_shapes):
+        boxes = box_ops.clip_boxes_to_image(boxes, image_shape)
+        labels = torch.arange(num_classes, device=boxes.device).view(1, -1).expand_as(scores)
+        boxes, scores, labels = boxes[:, 1:].reshape(-1, 4), scores[:, 1:].reshape(-1), labels[:, 1:].reshape(-1)
+        inds = torch.where(scores > self.score_thresh)[0]
+        boxes, scores, labels = boxes[inds], scores[inds], labels[inds]
+        keep = box_ops.remove_small_boxes(boxes, min_size=1e-2)
+        boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+        keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)[: self.detections_per_img]
+        w = ((box_ops.box_iou(boxes[keep], boxes) >= args.box_vote) & (labels[keep, None] == labels[None, :])) * scores
+        voted = (w @ boxes) / w.sum(dim=1, keepdim=True)  # each kept box is its own neighbour, so the sum is > 0
+        all_boxes.append(voted)
+        all_scores.append(scores[keep])
+        all_labels.append(labels[keep])
+    return all_boxes, all_scores, all_labels
+
 torch.set_num_threads(args.threads)
 run = args.run.expanduser()
 train_args = json.loads((run / 'metrics.json').read_text())['args']
@@ -49,6 +79,8 @@ model.roi_heads.detections_per_img = args.detections
 if train_args.get('cascade', False):
     model.roi_heads.test_boxes, model.roi_heads.test_logits = args.cascade_test_boxes, args.cascade_test_logits
     model.roi_heads.test_iou_score = not args.no_iou_score
+if args.box_vote is not None:
+    model.roi_heads.postprocess_detections = types.MethodType(postprocess_with_voting, model.roi_heads)
 model.to(args.device).eval()
 
 data = Path(train_args['data'])
