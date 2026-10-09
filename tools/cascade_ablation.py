@@ -16,7 +16,7 @@ from sarbench.backbones import build_backbone  # noqa: E402
 from sarbench.data import SARMultiTask, collate, to_original_xywh  # noqa: E402
 from sarbench.model import MultiTaskModel  # noqa: E402
 
-CONFIGS = [(b, s) for b in ('stage1', 'stage2') for s in ('stage1', 'stage2', 'mean')]
+CONFIGS = [(b, s) for b in ('stage1', 'stage2') for s in ('stage1', 'stage2', 'mean')]  # + 'mean_noiou' for --iou-score
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('run', type=Path)
@@ -29,6 +29,8 @@ torch.set_num_threads(args.threads)
 run = args.run.expanduser()
 train_args = json.loads((run / 'metrics.json').read_text())['args']
 assert train_args.get('cascade'), 'not a --cascade run'
+if train_args.get('iou_score'):
+    CONFIGS.append(('stage2', 'mean_noiou'))  # stage-1-box configs never get the IoU factor (model.py)
 
 backbone = build_backbone(train_args['backbone'], pretrained=False)
 if train_args['adapt'] != 'full':
@@ -49,7 +51,8 @@ with torch.no_grad():
         for target, pr in zip(targets, logits.float().softmax(dim=1).tolist()):
             probs[target['image_id']] = pr
         for boxes_from, scores_from in CONFIGS:
-            model.roi_heads.test_boxes, model.roi_heads.test_logits = boxes_from, scores_from
+            model.roi_heads.test_boxes, model.roi_heads.test_logits = boxes_from, scores_from.replace('_noiou', '')
+            model.roi_heads.test_iou_score = not scores_from.endswith('_noiou')
             outputs, _ = model.roi_heads(captured['f'], captured['p'], captured['s'])
             if (boxes_from, scores_from) == ('stage2', 'mean'):  # the method's own path must match the full forward
                 assert all(torch.equal(a['boxes'], b['boxes']) for a, b in zip(outputs, default_out))
@@ -58,7 +61,7 @@ with torch.no_grad():
                 detections[boxes_from, scores_from] += [
                     {'image_id': target['image_id'], 'category_id': c, 'bbox': b, 'score': s}
                     for b, c, s in zip(boxes, out['labels'].tolist(), out['scores'].tolist())]
-        model.roi_heads.test_boxes, model.roi_heads.test_logits = 'stage2', 'mean'
+        model.roi_heads.test_boxes, model.roi_heads.test_logits, model.roi_heads.test_iou_score = 'stage2', 'mean', True
 for (boxes_from, scores_from), dets in detections.items():
     out_dir = run / f'ablate_{boxes_from}_{scores_from}'
     out_dir.mkdir(exist_ok=True)

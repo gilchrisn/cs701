@@ -271,7 +271,7 @@ class CascadeRoIHeads(RoIHeads):
         # test: stage-1 logits on the RPN proposals, stage-2 logits and boxes on the refined proposals
         # (at test time refined[i] has one row per proposals[i] row, so the two stages' rows correspond)
         logits = {'mean': (logits1 + logits2) / 2, 'stage1': logits1, 'stage2': logits2}[self.test_logits]
-        if self.iou_pred is not None and self.test_iou_score:
+        if self.iou_pred is not None and self.test_iou_score and self.test_boxes == 'stage2':  # it predicts stage-2 boxes' IoU
             # foreground probabilities p_c -> p_c * IoU and background -> 1 - IoU * (1 - p_bg): the rows still sum to
             # 1, so torchvision's softmax inside postprocess_detections returns exactly p_c * IoU for every class
             p, iou = logits.softmax(dim=1), self.iou_pred(fc2).sigmoid()
