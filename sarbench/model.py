@@ -284,6 +284,7 @@ class CascadeRoIHeads(RoIHeads):
         self.iou_pred = None  # set in __init__, not on the class: a class attribute would hide the submodule
         self.kl_alpha1 = self.kl_alpha2 = None  # likewise (enable_kl_loss)
         self.balanced_l1 = False  # --balanced-l1: both stages' box loss is balanced_l1 instead of smooth-L1
+        self.box_loss_weight = 1.0  # --roi-box-weight: multiplies both stages' box loss (the RPN's is untouched)
 
     @contextlib.contextmanager
     def _stage2(self):
@@ -350,9 +351,9 @@ class CascadeRoIHeads(RoIHeads):
                 loss_box2 = kl_box_loss(deltas2, self.kl_alpha2(fc2), labels2, targets2)
             if self.balanced_l1:
                 loss_box2 = balanced_l1_box_loss(deltas2, labels2, targets2)
-            w = self.stage2_loss_weight
-            losses = {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
-                      'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
+            w, b = self.stage2_loss_weight, self.box_loss_weight
+            losses = {'loss_classifier': loss_classifier, 'loss_box_reg': b * loss_box_reg,
+                      'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * b * loss_box2}
             if self.iou_pred is not None:
                 losses['loss_iou_stage2'] = w * self._iou_loss(fc2, deltas2, refined, matched2, labels2, targets)
             return [], losses
@@ -379,7 +380,8 @@ class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
-                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False, kl_loss=False, balanced_l1=False):
+                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False, kl_loss=False, balanced_l1=False,
+                 roi_box_weight=1.0):
         super().__init__()
         if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
             raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
@@ -415,6 +417,9 @@ class MultiTaskModel(nn.Module):
         if kl_loss:
             self.roi_heads.enable_kl_loss()
         self.roi_heads.balanced_l1 = balanced_l1
+        if roi_box_weight != 1.0 and not cascade:
+            raise ValueError('roi_box_weight is implemented on the Cascade RoI heads only')
+        self.roi_heads.box_loss_weight = roi_box_weight
         self.spatial_prior = SpatialPrior() if spatial_prior else None
         if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd

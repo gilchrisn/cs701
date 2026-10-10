@@ -38,7 +38,8 @@ if train_args['adapt'] != 'full':
 model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora', cascade=True,
                        nwd_rpn=train_args.get('nwd_rpn', False), iou_score=train_args.get('iou_score', False),
                        kl_loss=train_args.get('kl_loss', False),
-                       balanced_l1=train_args.get('balanced_l1', False))
+                       balanced_l1=train_args.get('balanced_l1', False),
+                       roi_box_weight=train_args.get('roi_box_weight', 1.0))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.to(args.device).eval()
 captured = {}
