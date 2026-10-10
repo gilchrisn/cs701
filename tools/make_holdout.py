@@ -14,6 +14,9 @@ p.add_argument('--src', type=Path, required=True)
 p.add_argument('--out', type=Path, required=True)
 p.add_argument('--frac', type=float, default=0.15, help='fraction of every class held out')
 p.add_argument('--seed', type=int, default=0)
+p.add_argument('--train-all', action='store_true',
+               help='final model: train on ALL images; the held-out images stay as val/test for monitoring only '
+                    '(they are then also in train, so their scores are training-set scores)')
 args = p.parse_args()
 
 rows = list(csv.DictReader(open(args.src / 'labels.csv')))
@@ -32,7 +35,8 @@ for label, rs in sorted(by_class.items()):
 (args.out / 'detection').mkdir(parents=True, exist_ok=True)
 if not (args.out / 'images').exists():
     os.symlink((args.src / 'images').resolve(), args.out / 'images')
-splits = {'train': [r for r in rows if r['image_id'] not in held], 'val': [r for r in rows if r['image_id'] in held]}
+splits = {'train': [r for r in rows if args.train_all or r['image_id'] not in held],
+          'val': [r for r in rows if r['image_id'] in held]}
 splits['test'] = splits['val']
 for split, rs in splits.items():
     with open(args.out / 'classification' / f'{split}.csv', 'w', newline='') as f:
@@ -45,5 +49,5 @@ for split, rs in splits.items():
            'categories': coco['categories']}
     (args.out / 'detection' / f'instances_{split}.json').write_text(json.dumps(sub))
     print(split, len(rs), 'images', len(sub['annotations']), 'boxes')
-(args.out / 'SPLIT.json').write_text(json.dumps({'src': str(args.src), 'frac': args.frac, 'seed': args.seed,
+(args.out / 'SPLIT.json').write_text(json.dumps({'src': str(args.src), 'frac': args.frac, 'seed': args.seed, 'train_all': args.train_all,
                                                   'held_out_image_ids': sorted(int(i) for i in held)}))
