@@ -41,6 +41,7 @@ def parse_args():
     p.add_argument('--kl-loss', action='store_true', help='with --cascade: KL-Loss box regression + variance voting (1809.08545)')
     p.add_argument('--balanced-l1', action='store_true', help='with --cascade: balanced L1 box loss in both stages (1904.02701)')
     p.add_argument('--roi-box-weight', type=float, default=1.0, help='with --cascade: weight of both stages\' box loss (RPN untouched)')
+    p.add_argument('--partial-label', action='store_true', help='with --cascade: background RoIs are scored only against background + the image\'s labelled classes (H20)')
     p.add_argument('--dynamic-rcnn', action='store_true',
                    help='Dynamic R-CNN: RoI IoU threshold and smooth-L1 beta follow training statistics')
     p.add_argument('--cascade', action='store_true', help='Cascade R-CNN with one extra RoI stage at IoU 0.6')
@@ -153,7 +154,8 @@ def main():
     model = MultiTaskModel(backbone, task_routing=args.adapt == 'moelora', spatial_prior=args.spatial_prior,
                            nwd=args.nwd, nwd_rpn=args.nwd_rpn, dynamic_rcnn=args.dynamic_rcnn,
                            cascade=args.cascade, iou_score=args.iou_score, kl_loss=args.kl_loss,
-                           balanced_l1=args.balanced_l1, roi_box_weight=args.roi_box_weight).cuda()
+                           balanced_l1=args.balanced_l1, roi_box_weight=args.roi_box_weight,
+                           partial_label=args.partial_label).cuda()
     parameters = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'parameters: {parameters:,} total, {trainable:,} trainable', log_file)

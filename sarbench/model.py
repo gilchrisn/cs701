@@ -195,6 +195,24 @@ def balanced_l1_box_loss(deltas, labels, regression_targets):
     return balanced_l1(d - targets[pos]).sum() / n
 
 
+def partial_label_ce(logits, labels, targets):
+    """Optional (--partial-label). Softmax cross-entropy where an RoI sampled as background (label 0) in an image whose
+    labelled classes are A is scored over {background} + A only (other classes' logits set to -inf); RoIs matched to a box
+    keep the full softmax. Our images carry boxes of one class each, while their sources can contain other classes
+    unlabelled (M4-SAR, arXiv 2505.10931: "an average of 8.75 instances"), so a plain background target would teach that
+    those objects are background. Same idea as the federated loss (arXiv 2103.07461, suppl. D: "if we treat all
+    unannotated objects as negatives, the resulting detector will be too pessimistic and ignore rare classes").
+    logits [N, classes + 1]; labels, targets: per image, as returned by select_training_samples / given to the heads."""
+    lab = torch.cat(labels)
+    allowed = torch.zeros_like(logits, dtype=torch.bool)
+    allowed[:, 0] = True
+    start = 0
+    for l, t in zip(labels, targets):
+        allowed[start:start + len(l), t['labels'].unique().to(logits.device)] = True
+        start += len(l)
+    return F.cross_entropy(logits.masked_fill((lab == 0)[:, None] & ~allowed, float('-inf')), lab)
+
+
 class AgnosticPredictor(nn.Module):
     """Class scores (num_classes + 1) and ONE class-agnostic box delta per RoI, as in Cascade R-CNN's later stages."""
 
@@ -221,6 +239,7 @@ class CascadeRoIHeads(RoIHeads):
     test_boxes, test_logits = 'stage2', 'mean'  # inference-only ablations (tools/infer.py); defaults = the method
     test_iou_score = True  # --iou-score runs only; False = class probability alone (ablation)
     sigma_t, test_var_vote = 0.02, True  # --kl-loss runs only: "We set σt to 0.02" (1809.08545); False = no voting
+    partial_label = False  # --partial-label: partial_label_ce for both stages' classification losses
 
     def enable_kl_loss(self):
         """Optional (--kl-loss). KL-Loss (He et al., arXiv 1809.08545): both box regressors also predict α = log σ² for
@@ -341,6 +360,8 @@ class CascadeRoIHeads(RoIHeads):
                 loss_box_reg = kl_box_loss(deltas1, self.kl_alpha1(fc1), labels, regression_targets)
             if self.balanced_l1:
                 loss_box_reg = balanced_l1_box_loss(deltas1, labels, regression_targets)
+            if self.partial_label:
+                loss_classifier = partial_label_ce(logits1, labels, targets)
             with self._stage2():
                 refined, matched2, labels2, targets2 = self.select_training_samples(refined, targets)
         fc2 = self.box_head2(self.box_roi_pool(features, refined, image_shapes))
@@ -351,6 +372,8 @@ class CascadeRoIHeads(RoIHeads):
                 loss_box2 = kl_box_loss(deltas2, self.kl_alpha2(fc2), labels2, targets2)
             if self.balanced_l1:
                 loss_box2 = balanced_l1_box_loss(deltas2, labels2, targets2)
+            if self.partial_label:
+                loss_cls2 = partial_label_ce(logits2, labels2, targets)
             w, b = self.stage2_loss_weight, self.box_loss_weight
             losses = {'loss_classifier': loss_classifier, 'loss_box_reg': b * loss_box_reg,
                       'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * b * loss_box2}
@@ -381,7 +404,7 @@ class MultiTaskModel(nn.Module):
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
                  dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False, kl_loss=False, balanced_l1=False,
-                 roi_box_weight=1.0):
+                 roi_box_weight=1.0, partial_label=False):
         super().__init__()
         if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
             raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
@@ -420,6 +443,9 @@ class MultiTaskModel(nn.Module):
         if roi_box_weight != 1.0 and not cascade:
             raise ValueError('roi_box_weight is implemented on the Cascade RoI heads only')
         self.roi_heads.box_loss_weight = roi_box_weight
+        if partial_label and not cascade:
+            raise ValueError('partial_label is implemented on the Cascade RoI heads only')
+        self.roi_heads.partial_label = partial_label
         self.spatial_prior = SpatialPrior() if spatial_prior else None
         if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd
