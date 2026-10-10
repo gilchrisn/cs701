@@ -82,7 +82,8 @@ model = MultiTaskModel(backbone, task_routing=train_args['adapt'] == 'moelora',
                        nwd_rpn=train_args.get('nwd_rpn', False),
                        dynamic_rcnn=train_args.get('dynamic_rcnn', False), cascade=train_args.get('cascade', False),
                        iou_score=train_args.get('iou_score', False),
-                       kl_loss=train_args.get('kl_loss', False))
+                       kl_loss=train_args.get('kl_loss', False),
+                       balanced_l1=train_args.get('balanced_l1', False))
 model.load_state_dict(torch.load(run / 'model.pt', map_location='cpu'))
 model.roi_heads.score_thresh = args.score_thresh
 model.roi_heads.nms_thresh = args.nms_thresh

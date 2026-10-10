@@ -2,6 +2,7 @@
 from collections import OrderedDict
 
 import contextlib
+import math
 
 import numpy as np
 import torch
@@ -176,6 +177,24 @@ def kl_box_loss(deltas, alpha, labels, regression_targets):
     return (torch.exp(-a) * F.smooth_l1_loss(pick(deltas), targets[pos], beta=1 / 9, reduction='none') + a / 2).sum() / n
 
 
+def balanced_l1(x, alpha=0.5, gamma=1.5):
+    """Balanced L1 loss (Libra R-CNN, arXiv 1904.02701, eqs. 7-9): gradient alpha * ln(b|x| + 1) for |x| < 1 and gamma
+    beyond, with alpha * ln(b + 1) = gamma; the integral alpha / b * (b|x| + 1) ln(b|x| + 1) - alpha|x| below 1 and
+    gamma|x| + gamma / b - alpha above (continuous at |x| = 1). Defaults are the paper's (alpha 0.5, gamma 1.5)."""
+    b = math.exp(gamma / alpha) - 1
+    x = x.abs()
+    return torch.where(x < 1, alpha / b * (b * x + 1) * torch.log(b * x + 1) - alpha * x, gamma * x + gamma / b - alpha)
+
+
+def balanced_l1_box_loss(deltas, labels, regression_targets):
+    """torchvision's fastrcnn_loss box term with smooth-L1 (beta 1/9) replaced by balanced_l1; same normalisation
+    (sum over positive deltas / number of sampled RoIs). deltas: [N, 4 * classes] or [N, 4] (class-agnostic)."""
+    labels, targets = torch.cat(labels), torch.cat(regression_targets)
+    pos, n = torch.where(labels > 0)[0], len(labels)
+    d = deltas.reshape(n, -1, 4)[pos, labels[pos]] if deltas.shape[1] > 4 else deltas[pos]
+    return balanced_l1(d - targets[pos]).sum() / n
+
+
 class AgnosticPredictor(nn.Module):
     """Class scores (num_classes + 1) and ONE class-agnostic box delta per RoI, as in Cascade R-CNN's later stages."""
 
@@ -264,6 +283,7 @@ class CascadeRoIHeads(RoIHeads):
         self.box_coder2 = det_utils.BoxCoder(self.stage2_weights)
         self.iou_pred = None  # set in __init__, not on the class: a class attribute would hide the submodule
         self.kl_alpha1 = self.kl_alpha2 = None  # likewise (enable_kl_loss)
+        self.balanced_l1 = False  # --balanced-l1: both stages' box loss is balanced_l1 instead of smooth-L1
 
     @contextlib.contextmanager
     def _stage2(self):
@@ -318,6 +338,8 @@ class CascadeRoIHeads(RoIHeads):
             loss_classifier, loss_box_reg = roi_heads_module.fastrcnn_loss(logits1, deltas1, labels, regression_targets)
             if self.kl_alpha1 is not None:
                 loss_box_reg = kl_box_loss(deltas1, self.kl_alpha1(fc1), labels, regression_targets)
+            if self.balanced_l1:
+                loss_box_reg = balanced_l1_box_loss(deltas1, labels, regression_targets)
             with self._stage2():
                 refined, matched2, labels2, targets2 = self.select_training_samples(refined, targets)
         fc2 = self.box_head2(self.box_roi_pool(features, refined, image_shapes))
@@ -326,6 +348,8 @@ class CascadeRoIHeads(RoIHeads):
             loss_cls2, loss_box2 = roi_heads_module.fastrcnn_loss(logits2, deltas2.repeat(1, n_cls), labels2, targets2)
             if self.kl_alpha2 is not None:
                 loss_box2 = kl_box_loss(deltas2, self.kl_alpha2(fc2), labels2, targets2)
+            if self.balanced_l1:
+                loss_box2 = balanced_l1_box_loss(deltas2, labels2, targets2)
             w = self.stage2_loss_weight
             losses = {'loss_classifier': loss_classifier, 'loss_box_reg': loss_box_reg,
                       'loss_classifier_stage2': w * loss_cls2, 'loss_box_reg_stage2': w * loss_box2}
@@ -355,7 +379,7 @@ class MultiTaskModel(nn.Module):
     """backbone tokens -> classification logits (mean token -> LayerNorm -> Linear) and Faster R-CNN detections."""
 
     def __init__(self, backbone, task_routing: bool, num_classes=9, spatial_prior=False, nwd=False,
-                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False, kl_loss=False):
+                 dynamic_rcnn=False, cascade=False, nwd_rpn=False, iou_score=False, kl_loss=False, balanced_l1=False):
         super().__init__()
         if nwd + dynamic_rcnn + cascade > 1:  # each replaces the RoI heads; combining them is not implemented
             raise ValueError('use at most one of nwd, dynamic_rcnn, cascade')
@@ -365,6 +389,8 @@ class MultiTaskModel(nn.Module):
             raise ValueError('iou_score is implemented on the Cascade stage-2 head only')
         if kl_loss and not cascade:
             raise ValueError('kl_loss is implemented on the Cascade RoI heads only')
+        if balanced_l1 and (not cascade or kl_loss):
+            raise ValueError('balanced_l1 is implemented on the Cascade RoI heads only, and replaces the same loss as kl_loss')
         self.backbone = backbone
         self.task_routing = task_routing  # MoE-LoRA: the backbone runs once per task, with that task's routers
         self.cls_head = nn.Sequential(nn.LayerNorm(backbone.embed_dim), nn.Linear(backbone.embed_dim, num_classes))
@@ -388,6 +414,7 @@ class MultiTaskModel(nn.Module):
             self.roi_heads.enable_iou_branch()
         if kl_loss:
             self.roi_heads.enable_kl_loss()
+        self.roi_heads.balanced_l1 = balanced_l1
         self.spatial_prior = SpatialPrior() if spatial_prior else None
         if nwd:  # matching anchors (RPN) and proposals (SimilarityRoIHeads) to ground truth by max(IoU, NWD)
             self.rpn.box_similarity = iou_or_nwd
