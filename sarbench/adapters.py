@@ -48,15 +48,17 @@ class Mona(nn.Module):
     f_dw(z) = z + mean of depth-wise 3x3/5x5/7x7 convs of z, f_pw(z) = z + 1x1 conv of z, on the patch-token grid.
     Prefix (CLS) tokens pass through unchanged (our choice; the paper's Swin has none). U = 0: starts as the identity."""
 
-    def __init__(self, dim=768, hidden=64, prefix=1):
+    def __init__(self, dim=768, hidden=64, prefix=1, convs=True):
         super().__init__()
         self.prefix = prefix
+        self.convs = convs  # False: the same serial adapter without f_dw and f_pw (--adapt adapter, H22 control)
         self.norm = nn.LayerNorm(dim)
         self.s1 = nn.Parameter(torch.ones(()))
         self.s2 = nn.Parameter(torch.ones(()))
         self.mona_down = nn.Linear(dim, hidden)
-        self.dw = nn.ModuleList(nn.Conv2d(hidden, hidden, k, padding=k // 2, groups=hidden, bias=False) for k in (3, 5, 7))
-        self.pw = nn.Conv2d(hidden, hidden, 1, bias=False)  # no conv biases: matches the paper's parameter count, Eq. 6
+        if convs:
+            self.dw = nn.ModuleList(nn.Conv2d(hidden, hidden, k, padding=k // 2, groups=hidden, bias=False) for k in (3, 5, 7))
+            self.pw = nn.Conv2d(hidden, hidden, 1, bias=False)  # no conv biases: matches the paper's parameter count, Eq. 6
         self.mona_up = nn.Linear(hidden, dim)
         nn.init.zeros_(self.mona_up.weight)
         nn.init.zeros_(self.mona_up.bias)
@@ -67,21 +69,22 @@ class Mona(nn.Module):
         h = w = int(n ** 0.5)
         assert h * w == n, f'Mona needs a square token grid, got {n} tokens'
         z = self.mona_down(self.s1 * self.norm(x0) + self.s2 * x0)
-        z = z.transpose(1, 2).reshape(b, -1, h, w).contiguous()  # a strided view here fails in cuDNN for batch > 1
-        z = z + sum(conv(z) for conv in self.dw) / 3
-        z = z + self.pw(z)
-        z = z.reshape(b, -1, n).transpose(1, 2)
+        if self.convs:
+            z = z.transpose(1, 2).reshape(b, -1, h, w).contiguous()  # a strided view here fails in cuDNN for batch > 1
+            z = z + sum(conv(z) for conv in self.dw) / 3
+            z = z + self.pw(z)
+            z = z.reshape(b, -1, n).transpose(1, 2)
         return torch.cat([cls, x0 + self.mona_up(F.gelu(z))], dim=1)
 
 
 class MonaBlock(nn.Module):
     """A frozen timm ViT Block with one Mona after the attention residual and one after the MLP residual."""
 
-    def __init__(self, blk, dim=768, prefix=1):
+    def __init__(self, blk, dim=768, prefix=1, convs=True):
         super().__init__()
         self.blk = blk
-        self.mona1 = Mona(dim, prefix=prefix)
-        self.mona2 = Mona(dim, prefix=prefix)
+        self.mona1 = Mona(dim, prefix=prefix, convs=convs)
+        self.mona2 = Mona(dim, prefix=prefix, convs=convs)
 
     def forward(self, x, attn_mask=None):
         b = self.blk
@@ -93,12 +96,12 @@ class MonaBlock(nn.Module):
 
 def add_adapters(backbone, kind):
     """Freeze the backbone, then wrap attn.qkv and attn.proj of every block (kind: 'lora' or 'moelora'), or (kind 'mona')
-    replace every timm ViT block by a MonaBlock."""
+    replace every timm ViT block by a MonaBlock (kind 'adapter': without its convolutions)."""
     backbone.requires_grad_(False)
-    if kind == 'mona':
+    if kind in ('mona', 'adapter'):  # 'adapter': the same MonaBlock without convolutions
         vit = backbone.vit  # timm ViT only
         for i, blk in enumerate(vit.blocks):
-            vit.blocks[i] = MonaBlock(blk, vit.embed_dim, vit.num_prefix_tokens)
+            vit.blocks[i] = MonaBlock(blk, vit.embed_dim, vit.num_prefix_tokens, convs=kind == 'mona')
         return
     adapter = {'lora': LoRA, 'moelora': MoELoRA}[kind]
     for blk in backbone.blocks:

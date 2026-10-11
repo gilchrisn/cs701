@@ -22,7 +22,7 @@ def parse_args():
     p.add_argument('--data', type=Path, default=Path(__file__).resolve().parents[1] / 'dataset' / 'SARFact-Course-20K')
     p.add_argument('--backbone', required=True, choices=['vit', 'terramind'])
     p.add_argument('--init', required=True, choices=['pretrained', 'scratch'])
-    p.add_argument('--adapt', required=True, choices=['full', 'lora', 'moelora', 'mona'])
+    p.add_argument('--adapt', required=True, choices=['full', 'lora', 'moelora', 'mona', 'adapter'])
     p.add_argument('--epochs', type=int, default=24)
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--accum', type=int, default=1, help='gradient accumulation: --batch-size / --accum images per forward pass')
