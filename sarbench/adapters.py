@@ -1,4 +1,6 @@
-"""LoRA and MoE-LoRA adapters for the attention layers of a frozen backbone."""
+"""LoRA and MoE-LoRA adapters for the attention layers of a frozen backbone, and Mona adapters on its residual stream."""
+import torch
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -41,10 +43,64 @@ class MoELoRA(nn.Module):
         return self.base(x) + self.scale * self.up(self.down(x) * gates)
 
 
+class Mona(nn.Module):
+    """Mona adapter (arXiv 2408.08345, Eqs. 3-5) on the residual stream: x = x0 + U gelu(f_pw(f_dw(D(s1 LN(x0) + s2 x0)))),
+    f_dw(z) = z + mean of depth-wise 3x3/5x5/7x7 convs of z, f_pw(z) = z + 1x1 conv of z, on the patch-token grid.
+    Prefix (CLS) tokens pass through unchanged (our choice; the paper's Swin has none). U = 0: starts as the identity."""
+
+    def __init__(self, dim=768, hidden=64, prefix=1):
+        super().__init__()
+        self.prefix = prefix
+        self.norm = nn.LayerNorm(dim)
+        self.s1 = nn.Parameter(torch.ones(()))
+        self.s2 = nn.Parameter(torch.ones(()))
+        self.mona_down = nn.Linear(dim, hidden)
+        self.dw = nn.ModuleList(nn.Conv2d(hidden, hidden, k, padding=k // 2, groups=hidden, bias=False) for k in (3, 5, 7))
+        self.pw = nn.Conv2d(hidden, hidden, 1, bias=False)  # no conv biases: matches the paper's parameter count, Eq. 6
+        self.mona_up = nn.Linear(hidden, dim)
+        nn.init.zeros_(self.mona_up.weight)
+        nn.init.zeros_(self.mona_up.bias)
+
+    def forward(self, x):
+        cls, x0 = x[:, :self.prefix], x[:, self.prefix:]
+        b, n, _ = x0.shape
+        h = w = int(n ** 0.5)
+        assert h * w == n, f'Mona needs a square token grid, got {n} tokens'
+        z = self.mona_down(self.s1 * self.norm(x0) + self.s2 * x0)
+        z = z.transpose(1, 2).reshape(b, -1, h, w).contiguous()  # a strided view here fails in cuDNN for batch > 1
+        z = z + sum(conv(z) for conv in self.dw) / 3
+        z = z + self.pw(z)
+        z = z.reshape(b, -1, n).transpose(1, 2)
+        return torch.cat([cls, x0 + self.mona_up(F.gelu(z))], dim=1)
+
+
+class MonaBlock(nn.Module):
+    """A frozen timm ViT Block with one Mona after the attention residual and one after the MLP residual."""
+
+    def __init__(self, blk, dim=768, prefix=1):
+        super().__init__()
+        self.blk = blk
+        self.mona1 = Mona(dim, prefix=prefix)
+        self.mona2 = Mona(dim, prefix=prefix)
+
+    def forward(self, x, attn_mask=None):
+        b = self.blk
+        x = x + b.drop_path1(b.ls1(b.attn(b.norm1(x), attn_mask=attn_mask)))
+        x = self.mona1(x)
+        x = x + b.drop_path2(b.ls2(b.mlp(b.norm2(x))))
+        return self.mona2(x)
+
+
 def add_adapters(backbone, kind):
-    """Freeze the backbone, then wrap attn.qkv and attn.proj of every block (kind: 'lora' or 'moelora')."""
-    adapter = {'lora': LoRA, 'moelora': MoELoRA}[kind]
+    """Freeze the backbone, then wrap attn.qkv and attn.proj of every block (kind: 'lora' or 'moelora'), or (kind 'mona')
+    replace every timm ViT block by a MonaBlock."""
     backbone.requires_grad_(False)
+    if kind == 'mona':
+        vit = backbone.vit  # timm ViT only
+        for i, blk in enumerate(vit.blocks):
+            vit.blocks[i] = MonaBlock(blk, vit.embed_dim, vit.num_prefix_tokens)
+        return
+    adapter = {'lora': LoRA, 'moelora': MoELoRA}[kind]
     for blk in backbone.blocks:
         blk.attn.qkv = adapter(blk.attn.qkv)
         blk.attn.proj = adapter(blk.attn.proj)

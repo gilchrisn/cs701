@@ -22,7 +22,7 @@ def parse_args():
     p.add_argument('--data', type=Path, default=Path(__file__).resolve().parents[1] / 'dataset' / 'SARFact-Course-20K')
     p.add_argument('--backbone', required=True, choices=['vit', 'terramind'])
     p.add_argument('--init', required=True, choices=['pretrained', 'scratch'])
-    p.add_argument('--adapt', required=True, choices=['full', 'lora', 'moelora'])
+    p.add_argument('--adapt', required=True, choices=['full', 'lora', 'moelora', 'mona'])
     p.add_argument('--epochs', type=int, default=24)
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--accum', type=int, default=1, help='gradient accumulation: --batch-size / --accum images per forward pass')
@@ -161,7 +161,8 @@ def main():
     log(f'parameters: {parameters:,} total, {trainable:,} trainable', log_file)
 
     # Optimizer and schedule: trainable backbone parameters at --backbone-lr, all new modules at --lr
-    is_unfrozen = lambda name: args.adapt != 'full' and '.down.' not in name and '.up.' not in name and 'router' not in name
+    is_unfrozen = lambda name: (args.adapt != 'full' and '.down.' not in name and '.up.' not in name and 'router' not in name
+                                 and '.mona' not in name)
     backbone_params = [p for n, p in model.backbone.named_parameters() if p.requires_grad and not is_unfrozen(n)]
     unfrozen_params = [p for n, p in model.backbone.named_parameters() if p.requires_grad and is_unfrozen(n)]
     head_params = [p for name, p in model.named_parameters() if not name.startswith('backbone.')]
