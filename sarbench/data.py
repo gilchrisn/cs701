@@ -3,6 +3,7 @@ Loads images and boxes at a fixed input size and maps predicted boxes back to or
 import csv
 import json
 import math
+import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -27,7 +28,7 @@ class SARMultiTask(Dataset):
     image, 'labels': 1..9, 'image_id': COCO id, 'orig_size': (h, w)}."""
 
     def __init__(self, root, split, train=False, size=512, limit=None, log_input=False, copy_paste=False):
-        self.copy_paste = copy_paste and train
+        self.copy_paste = copy_paste if train else False  # False, 'same' (objects of the image itself) or 'other'
         self.root = Path(root)
         with open(self.root / 'classification' / f'{split}.csv') as f:
             self.rows = list(csv.DictReader(f))[:limit]
@@ -36,6 +37,10 @@ class SARMultiTask(Dataset):
         self.annotations = defaultdict(list)  # COCO image id -> its boxes
         for ann in coco['annotations']:
             self.annotations[ann['image_id']].append(ann)
+        self.donors = defaultdict(list)  # (class, height, width) -> row indices; donors for copy_paste='other'
+        for k, row in enumerate(self.rows):
+            info = self.coco_images[row['image']]
+            self.donors[(row['label'], info['height'], info['width'])].append(k)
         flips = [v2.RandomHorizontalFlip(), v2.RandomVerticalFlip()] if train else []
         self.transform = v2.Compose([
             v2.ToImage(),
@@ -59,35 +64,53 @@ class SARMultiTask(Dataset):
                                          dtype=torch.float32)  # integer boxes would be truncated by Resize
         image = Image.open(self.root / row['image']).convert('L')  # PIL: torchvision.io cannot read .bmp
         labels = [a['category_id'] for a in anns]
-        if self.copy_paste:
+        if self.copy_paste == 'same':
             image, boxes, labels = paste_small_objects(image, boxes, labels, orig_size)
+        elif self.copy_paste == 'other' and (donor := self.donor(i, row['label'], orig_size)):  # no donor: no paste
+            image, boxes, labels = paste_small_objects(image, boxes, labels, orig_size, donor)
         image, boxes = self.transform(image, boxes)
         target = {'boxes': boxes, 'labels': torch.tensor(labels),
                   'image_id': info['id'], 'orig_size': orig_size}
         return image, int(row['label']), target
 
+    def donor(self, i, label, orig_size):
+        """Another training image of the same class and the same original size (so the image label stays right and the
+        pixels share a scale), as (PIL image, XYWH boxes, labels); None if there is no such image."""
+        group = self.donors[(label, *orig_size)]
+        if len(group) < 2:
+            return None
+        j = i
+        while j == i:
+            j = random.choice(group)
+        info = self.coco_images[self.rows[j]['image']]
+        anns = self.annotations[info['id']]
+        return (Image.open(self.root / self.rows[j]['image']).convert('L'), [a['bbox'] for a in anns],
+                [a['category_id'] for a in anns])
 
 
-def paste_small_objects(image, boxes, labels, orig_size, p=0.5, max_side_frac=0.125, copies=3, tries=20):
+
+def paste_small_objects(image, boxes, labels, orig_size, donor=None, p=0.5, max_side_frac=0.125, copies=3, tries=20):
     """Optional (--copy-paste, training only). With probability p, copy up to `copies` small objects of THIS image
     (box side <= max_side_frac of the image side, i.e. <= 64 px at 512) to random free spots of the same image, and add
     their boxes. Same image, so the image class and the sensor's statistics stay right (after Kisantal et al. 2019,
-    "Augmentation for small object detection", which pasted with masks; we paste rectangles)."""
-    import random
+    "Augmentation for small object detection", which pasted with masks; we paste rectangles).
+    donor = (image, XYWH boxes, labels) of another image of the same class and size (--paste-from-other): the objects
+    are taken from it instead (cross-image copy-paste, as in Ghiasi et al. 2021 "Simple Copy-Paste", also with masks)."""
     if random.random() > p:
         return image, boxes, labels
     h, w = orig_size
     xywh = boxes.tolist()
-    small = [k for k, (x, y, bw, bh) in enumerate(xywh) if max(bw, bh) <= max_side_frac * max(h, w) and bw >= 2 and bh >= 2]
+    image = image.copy()
+    src_image, src_xywh, src_labels = donor if donor else (image, xywh, labels)
+    small = [k for k, (x, y, bw, bh) in enumerate(src_xywh) if max(bw, bh) <= max_side_frac * max(h, w) and bw >= 2 and bh >= 2]
     if not small:
         return image, boxes, labels
-    image = image.copy()
     occupied = [list(b) for b in xywh]
     new_boxes, new_labels = list(xywh), list(labels)
     for k in random.sample(small, min(copies, len(small))):
-        x, y, bw, bh = xywh[k]
+        x, y, bw, bh = src_xywh[k]
         x0, y0, x1, y1 = int(x), int(y), int(round(x + bw)), int(round(y + bh))
-        patch = image.crop((x0, y0, x1, y1))
+        patch = src_image.crop((x0, y0, x1, y1))
         pw, ph = patch.size
         for _ in range(tries):
             nx, ny = random.randint(0, max(w - pw, 0)), random.randint(0, max(h - ph, 0))
@@ -95,7 +118,7 @@ def paste_small_objects(image, boxes, labels, orig_size, p=0.5, max_side_frac=0.
                 image.paste(patch, (nx, ny))
                 occupied.append([nx, ny, pw, ph])
                 new_boxes.append([nx, ny, pw, ph])
-                new_labels.append(labels[k])
+                new_labels.append(src_labels[k])
                 break
     boxes = tv_tensors.BoundingBoxes(new_boxes, format='XYWH', canvas_size=orig_size, dtype=torch.float32)
     return image, boxes, new_labels

@@ -50,6 +50,9 @@ def parse_args():
     p.add_argument('--det-weight', type=float, default=1.0, help='weight of the Faster R-CNN losses vs cross-entropy')
     p.add_argument('--log-input', action='store_true', help='log-scale the 8-bit pixels before normalising')
     p.add_argument('--copy-paste', action='store_true', help='paste copies of small objects within each training image')
+    p.add_argument('--paste-from-other', action='store_true',
+                   help='with --copy-paste: take the small objects from another training image of the same class and the same '
+                   'original size (cross-image copy-paste) instead of from the image itself')
     p.add_argument('--out', type=Path, default=Path('runs'))
     p.add_argument('--resume', action='store_true', help='continue from <out>/checkpoint.pt if it exists')
     p.add_argument('--init-from', type=Path, help='start from these weights (a run\'s model.pt) with a fresh optimizer and '
@@ -72,7 +75,7 @@ def make_loader(args, split):
     """Batches of `split`; only the training set is shuffled and augmented."""
     train = split == 'train'
     dataset = SARMultiTask(args.data, split, train=train, limit=args.limit, log_input=args.log_input,
-                           copy_paste=args.copy_paste)
+                           copy_paste=('other' if args.paste_from_other else 'same') if args.copy_paste else False)
     return DataLoader(dataset, args.batch_size // args.accum, shuffle=train, num_workers=args.workers, collate_fn=collate,
                       persistent_workers=train and args.workers > 0)  # training workers live across epochs
 
