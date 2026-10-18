@@ -8,6 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import tv_tensors
@@ -27,8 +28,9 @@ class SARMultiTask(Dataset):
     An item is (image [1, size, size], label 0..8, target), target = {'boxes': XYXY on the resized
     image, 'labels': 1..9, 'image_id': COCO id, 'orig_size': (h, w)}."""
 
-    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False, copy_paste=False):
+    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False, copy_paste=False, scale_jitter=None):
         self.copy_paste = copy_paste if train else False  # False, 'same' (objects of the image itself) or 'other'
+        self.scale_jitter = scale_jitter if train else None  # (lo, hi) or None
         self.root = Path(root)
         with open(self.root / 'classification' / f'{split}.csv') as f:
             self.rows = list(csv.DictReader(f))[:limit]
@@ -69,7 +71,10 @@ class SARMultiTask(Dataset):
         elif self.copy_paste == 'other' and (donor := self.donor(i, row['label'], orig_size)):  # no donor: no paste
             image, boxes, labels = paste_small_objects(image, boxes, labels, orig_size, donor)
         image, boxes = self.transform(image, boxes)
-        target = {'boxes': boxes, 'labels': torch.tensor(labels),
+        labels = torch.tensor(labels)
+        if self.scale_jitter:
+            image, boxes, labels = scale_jitter(image, boxes, labels, self.scale_jitter)
+        target = {'boxes': boxes, 'labels': labels,
                   'image_id': info['id'], 'orig_size': orig_size}
         return image, int(row['label']), target
 
@@ -122,6 +127,30 @@ def paste_small_objects(image, boxes, labels, orig_size, donor=None, p=0.5, max_
                 break
     boxes = tv_tensors.BoundingBoxes(new_boxes, format='XYWH', canvas_size=orig_size, dtype=torch.float32)
     return image, boxes, new_labels
+
+
+def scale_jitter(image, boxes, labels, scale_range, tries=10):
+    """Optional (--scale-jitter LO HI, training only). Resize the normalised [1, S, S] image by s ~ U(LO, HI), then cut a
+    random S x S window (s > 1) or place it at a random spot on an S x S canvas of 0, the dataset mean after
+    normalisation (s < 1); boxes move with the pixels, are clipped to the window and dropped if under 1 px wide or high.
+    A window that keeps no box is redrawn (the image label needs its objects), up to `tries` times, else the image is
+    left as it is. Large-scale jitter (Ghiasi et al. 2021, used by ViTDet) with a narrower range for our tiny objects."""
+    size = image.shape[-1]
+    for _ in range(tries):
+        n = max(round(size * random.uniform(*scale_range)), 1)
+        scaled = F.interpolate(image[None], size=(n, n), mode='bilinear', align_corners=False, antialias=n < size)[0]
+        if n >= size:  # crop
+            x0, y0 = random.randint(0, n - size), random.randint(0, n - size)
+            out = scaled[:, y0:y0 + size, x0:x0 + size]
+        else:  # pad
+            x0, y0 = -random.randint(0, size - n), -random.randint(0, size - n)
+            out = image.new_zeros(image.shape)
+            out[:, -y0:-y0 + n, -x0:-x0 + n] = scaled
+        b = (boxes.as_subclass(torch.Tensor) * (n / size) - boxes.new_tensor([x0, y0, x0, y0])).clamp(0, size)
+        keep = ((b[:, 2] - b[:, 0]) >= 1) & ((b[:, 3] - b[:, 1]) >= 1)
+        if keep.any():
+            return out, tv_tensors.BoundingBoxes(b[keep], format='XYXY', canvas_size=(size, size)), labels[keep]
+    return image, boxes, labels
 
 
 def collate(batch):

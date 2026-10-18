@@ -53,6 +53,8 @@ def parse_args():
     p.add_argument('--paste-from-other', action='store_true',
                    help='with --copy-paste: take the small objects from another training image of the same class and the same '
                    'original size (cross-image copy-paste) instead of from the image itself')
+    p.add_argument('--scale-jitter', type=float, nargs=2, metavar=('LO', 'HI'),
+                   help='large-scale jitter: resize each training image by a factor drawn from [LO, HI], then crop or pad back')
     p.add_argument('--out', type=Path, default=Path('runs'))
     p.add_argument('--resume', action='store_true', help='continue from <out>/checkpoint.pt if it exists')
     p.add_argument('--init-from', type=Path, help='start from these weights (a run\'s model.pt) with a fresh optimizer and '
@@ -75,7 +77,8 @@ def make_loader(args, split):
     """Batches of `split`; only the training set is shuffled and augmented."""
     train = split == 'train'
     dataset = SARMultiTask(args.data, split, train=train, limit=args.limit, log_input=args.log_input,
-                           copy_paste=('other' if args.paste_from_other else 'same') if args.copy_paste else False)
+                           copy_paste=('other' if args.paste_from_other else 'same') if args.copy_paste else False,
+                           scale_jitter=args.scale_jitter)
     return DataLoader(dataset, args.batch_size // args.accum, shuffle=train, num_workers=args.workers, collate_fn=collate,
                       persistent_workers=train and args.workers > 0)  # training workers live across epochs
 
