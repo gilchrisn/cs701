@@ -52,6 +52,8 @@ def parse_args():
     p.add_argument('--copy-paste', action='store_true', help='paste copies of small objects within each training image')
     p.add_argument('--out', type=Path, default=Path('runs'))
     p.add_argument('--resume', action='store_true', help='continue from <out>/checkpoint.pt if it exists')
+    p.add_argument('--init-from', type=Path, help='start from these weights (a run\'s model.pt) with a fresh optimizer and '
+                   'schedule (short fine-tune tests); modules the file lacks keep their initialisation')
     args = p.parse_args()
     if args.init == 'scratch' and args.adapt != 'full':
         p.error('--init scratch is only valid with --adapt full')
@@ -159,6 +161,9 @@ def main():
     parameters = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log(f'parameters: {parameters:,} total, {trainable:,} trainable', log_file)
+    if args.init_from:  # weights only; optimizer and schedule start fresh (a --resume checkpoint, if any, overrides this)
+        missing, unexpected = model.load_state_dict(torch.load(args.init_from, map_location='cpu'), strict=False)
+        log(f'initialised from {args.init_from}: {len(missing)} tensors missing (kept new), {len(unexpected)} unused', log_file)
 
     # Optimizer and schedule: trainable backbone parameters at --backbone-lr, all new modules at --lr
     is_unfrozen = lambda name: (args.adapt != 'full' and '.down.' not in name and '.up.' not in name and 'router' not in name
