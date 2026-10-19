@@ -50,7 +50,7 @@ class SARMultiTask(Dataset):
             v2.Resize((size, size)),  # stretches non-square images; boxes are scaled with the pixels
             *flips,  # overhead imagery has no canonical "up"
             v2.ToDtype(torch.float32, scale=True),
-            *([v2.Lambda(lambda x: torch.log1p(255 * x) / math.log1p(255))] if log_input else []),
+            *([v2.Lambda(lambda x: torch.log1p(255 * x) / math.log1p(255), tv_tensors.Image)] if log_input else []),  # pixels only: without the type, v2.Lambda also transformed the boxes
             v2.Normalize([LOG_MEAN], [LOG_STD]) if log_input else v2.Normalize([MEAN], [STD]),
         ])
 
