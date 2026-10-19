@@ -15,6 +15,7 @@ from sarbench.adapters import add_adapters  # noqa: E402
 from sarbench.backbones import build_backbone  # noqa: E402
 from sarbench.data import SARMultiTask, collate, to_original_xywh  # noqa: E402
 from sarbench.model import MultiTaskModel  # noqa: E402
+from sarbench.paths import data_root  # noqa: E402
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('run', type=Path)
@@ -42,7 +43,7 @@ model.to(args.device).eval()
 default_nms = model.roi_heads.nms_thresh
 captured = {}
 model.roi_heads.register_forward_pre_hook(lambda mod, inp: captured.update(f=inp[0], p=inp[1], s=inp[2]))
-loader = DataLoader(SARMultiTask(Path(train_args['data']), 'val', limit=args.limit), args.batch_size, num_workers=2,
+loader = DataLoader(SARMultiTask(data_root(train_args['data']), 'val', limit=args.limit), args.batch_size, num_workers=2,
                     collate_fn=collate)
 detections, probs = {t: [] for t in args.thresholds}, {}
 with torch.no_grad():

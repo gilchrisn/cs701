@@ -10,10 +10,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze import SIDE_BINS, ap_from_precision, coco_eval, to_512  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sarbench.paths import data_root  # noqa: E402
 
 run = Path(sys.argv[1]).expanduser()
 metrics = json.loads((run / 'metrics.json').read_text())
-gt = json.loads((Path(metrics['args']['data']) / 'detection' / 'instances_val.json').read_text())
+gt = json.loads((data_root(metrics['args']['data']) / 'detection' / 'instances_val.json').read_text())
 dets = json.loads((run / 'predictions_val.json').read_text())
 names = {c['id']: c['name'] for c in gt['categories']}
 g512, d512 = to_512(gt, dets)

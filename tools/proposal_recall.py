@@ -22,6 +22,7 @@ from sarbench.adapters import add_adapters  # noqa: E402
 from sarbench.backbones import build_backbone  # noqa: E402
 from sarbench.data import SARMultiTask, collate  # noqa: E402
 from sarbench.model import MultiTaskModel  # noqa: E402
+from sarbench.paths import data_root  # noqa: E402
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('run', type=Path)
@@ -48,7 +49,7 @@ captured = {}
 model.rpn.register_forward_hook(lambda mod, inp, out: captured.__setitem__('proposals', out[0]))
 model.roi_heads.register_forward_pre_hook(lambda mod, inp: captured.update(features=inp[0], sizes=inp[2]))
 
-data = SARMultiTask(Path(train_args['data']), 'val', limit=args.limit, log_input=train_args.get('log_input', False))
+data = SARMultiTask(data_root(train_args['data']), 'val', limit=args.limit, log_input=train_args.get('log_input', False))
 rows = []  # (side at 512 input, best proposal IoU, best same-class detection IoU)
 regress_rows = []  # (side of the assigned ground truth, proposal IoU, IoU after regression, true-class probability)
 regress2_rows = []  # --cascade runs: the same proposals through the stage-2 head alone (side, proposal IoU, output IoU)

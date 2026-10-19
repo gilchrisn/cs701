@@ -9,6 +9,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze import SIDE_BINS, coco_eval, to_512  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sarbench.paths import data_root  # noqa: E402
 
 
 def ap(p, t, k=None, a=0):
@@ -20,7 +22,7 @@ def ap(p, t, k=None, a=0):
 run = Path(sys.argv[1]).expanduser()
 metrics = json.loads((run / 'metrics.json').read_text())
 split = metrics.get('posthoc', {}).get('split', 'val')  # tools/infer.py --split train evaluates training images
-gt = json.loads((Path(metrics['args']['data']) / 'detection' / f'instances_{split}.json').read_text())
+gt = json.loads((data_root(metrics['args']['data']) / 'detection' / f'instances_{split}.json').read_text())
 dets = json.loads((run / 'predictions_val.json').read_text())
 inferred = {int(k) for k in json.loads((run / 'class_probs_val.json').read_text())}  # every image the model saw
 gt = {**gt, 'images': [i for i in gt['images'] if i['id'] in inferred],

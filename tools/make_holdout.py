@@ -34,7 +34,7 @@ for label, rs in sorted(by_class.items()):
 (args.out / 'classification').mkdir(parents=True, exist_ok=True)
 (args.out / 'detection').mkdir(parents=True, exist_ok=True)
 if not (args.out / 'images').exists():
-    os.symlink((args.src / 'images').resolve(), args.out / 'images')
+    os.symlink(os.path.relpath((args.src / 'images').resolve(), args.out.resolve()), args.out / 'images')  # relative: survives moving the data folder
 splits = {'train': [r for r in rows if args.train_all or r['image_id'] not in held],
           'val': [r for r in rows if r['image_id'] in held]}
 splits['test'] = splits['val']

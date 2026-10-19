@@ -27,6 +27,8 @@ import torch
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from torchvision.ops import box_iou, nms
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sarbench.paths import data_root  # noqa: E402
 
 SIDE_BINS = [('all', 0, 1e5), ('<8', 0, 8), ('8-16', 8, 16), ('16-32', 16, 32), ('>32', 32, 1e5)]
 
@@ -200,7 +202,7 @@ def macro_f1(cm):
 def main(run):
     run = Path(run).expanduser()
     metrics = json.loads((run / 'metrics.json').read_text())
-    root = Path(metrics['args']['data'])
+    root = data_root(metrics['args']['data'])
     gt = json.loads((root / 'detection' / 'instances_val.json').read_text())
     dets = json.loads((run / 'predictions_val.json').read_text())
     probs = {int(k): v for k, v in json.loads((run / 'class_probs_val.json').read_text()).items()}

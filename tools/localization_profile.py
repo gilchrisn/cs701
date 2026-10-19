@@ -9,9 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 from torchvision.ops import box_iou
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from sarbench.paths import data_root  # noqa: E402
 
 run = Path(sys.argv[1]).expanduser()
-root = Path(json.loads((run / 'metrics.json').read_text())['args']['data'])
+root = data_root(json.loads((run / 'metrics.json').read_text())['args']['data'])
 gt = json.loads((root / 'detection' / 'instances_val.json').read_text())
 dets = json.loads((run / 'predictions_val.json').read_text())
 names = {c['id']: c['name'] for c in gt['categories']}

@@ -17,6 +17,7 @@ from sarbench.adapters import add_adapters  # noqa: E402
 from sarbench.backbones import build_backbone  # noqa: E402
 from sarbench.data import SARMultiTask, collate, to_original_xywh  # noqa: E402
 from sarbench.model import MultiTaskModel  # noqa: E402
+from sarbench.paths import data_root  # noqa: E402
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('run', type=Path)
@@ -102,7 +103,7 @@ if args.box_vote is not None or args.var_vote is not None:
     model.roi_heads.postprocess_detections = types.MethodType(postprocess_with_voting, model.roi_heads)
 model.to(args.device).eval()
 
-data = Path(train_args['data'])
+data = data_root(train_args['data'])
 loader = DataLoader(SARMultiTask(data, args.split, limit=args.limit, log_input=train_args.get('log_input', False)), args.batch_size,
                     num_workers=4, collate_fn=collate)
 detections, probs = [], {}
