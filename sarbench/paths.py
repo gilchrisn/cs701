@@ -1,9 +1,9 @@
 """Data folder of a finished run. Runs record the --data path they were trained with; that path is stale when the data has moved
-since (laptop: ~/cs701-data -> ~/cs701/data on 2026-10-19) or when the run was trained on the school server and pulled."""
+since or when the run was trained on another machine. SARBENCH_MOVED maps old to new prefixes: "old1=new1;old2=new2"."""
+import os
 from pathlib import Path
 
-MOVED = {'/home/gilchris/cs701-data': '/home/gilchris/cs701/data',
-         '/home/yudong/gilchris/sar_det/data': '/home/gilchris/cs701/data'}
+MOVED = dict(pair.split('=', 1) for pair in os.environ.get('SARBENCH_MOVED', '').split(';') if '=' in pair)
 
 
 def data_root(recorded):
