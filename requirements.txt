@@ -6,3 +6,4 @@ terratorch==1.2.7
 torchgeo==0.9.0  # terratorch 1.2.7 imports torchgeo.trainers.utils, removed in torchgeo 0.10
 pycocotools==2.0.11
 pytest==9.1.1
+ultralytics==8.4.182  # YOLO26l-P2 (train_yolo.py, tools/*yolo*.py)

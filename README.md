@@ -20,6 +20,7 @@ image (9 classes) and **detect** its objects.
 3. [Baseline Results (for reference)](#3-baseline-results-for-reference)
 4. [Code Structure](#4-code-structure)
 5. [Links](#5-links)
+6. [YOLO26l-P2 (our best model)](#6-yolo26l-p2-our-best-model)
 
 ## 1. SAR Task Introduction
 
@@ -143,6 +144,7 @@ Accuracy and AP50: [docs/DETAILS.md](docs/DETAILS.md#results-in-full).
 
 ```
 train.py              entry: train + evaluate one configuration
+train_yolo.py         entry: train or fine-tune YOLO26l-P2 (section 6)
 run_all.sh            the eight reference runs (calls train.py)
 make_submission.py    write_submission(): predictions -> submission.zip
 sarbench/             the code behind train.py
@@ -151,6 +153,7 @@ sarbench/             the code behind train.py
 ├── adapters.py       LoRA, MoE-LoRA on a frozen backbone
 ├── model.py          backbone + class head + ViTDet feature pyramid + Faster R-CNN
 └── metrics.py        accuracy, macro-F1, COCO box AP
+tools/                hold-out split, YOLO data and submission, analysis of finished runs
 tests/                checks of sarbench/ (python -m pytest tests)
 docs/DETAILS.md       model, training protocol, design notes, time and memory
 ```
@@ -160,5 +163,33 @@ More: [docs/DETAILS.md](docs/DETAILS.md).
 ## 5. Links
 
 - Data: https://huggingface.co/datasets/doem1997/cs701-sar-course-data
-- Leaderboard: https://www.codabench.org/competitions/18271
+- Leaderboard: https://web-production-c241e.up.railway.app (Codabench, https://www.codabench.org/competitions/18271,
+  is down since 2026-10-25)
 - Questions: TA Zichen, zichen.tian.2023@phdcs.smu.edu.sg
+
+## 6. YOLO26l-P2 (our best model)
+
+One detector, no classification head: the image label is the class with the largest summed box score in that image.
+
+- Model: Ultralytics YOLO26-large with an extra P2 output (stride 4, for objects of a few pixels), `yolo26l-p2.yaml`,
+  initialised from the COCO-pretrained `yolo26l.pt`. 25.7 M parameters, all trained.
+- Training: 96 epochs, 512 × 512, batch 16, seed 0, Ultralytics 8.4.182 defaults otherwise; 3.3 h on one RTX A5000.
+- Held-out split (15 % of every class, seed 0; 1,408 images), score ≥ 0.001: mAP 42.9, AP50 69.4, macro-F1 93.3.
+  Bridge and playground stay low (AP 4.7 and 7.2).
+
+```bash
+pip install -r requirements.txt
+python tools/make_holdout.py --src data/train --out data/holdout15_seed0        # 85 % train, 15 % held out
+python tools/make_yolo_data.py data/holdout15_seed0 data/yolo_holdout15_seed0    # YOLO labels + data.yaml
+python train_yolo.py --data data/yolo_holdout15_seed0/data.yaml --model yolo26l-p2.yaml --init yolo26l.pt \
+    --out runs/yolo26lp2_96ep
+python tools/predict_submission_yolo.py runs/yolo26lp2_96ep/weights/last.pt --images-json data/val/images.json \
+    --root data/val --out submission_val.zip
+```
+
+- The numbers above are from `last.pt` (epoch 96). Weights (52 MB) are not in git.
+- Fine-tune them: `--model yolo26l-p2_96ep.pt`, other Ultralytics arguments as `key=value` at the end
+  (`python train_yolo.py -h`). `lr0` needs a named optimizer (`optimizer=AdamW lr0=...`); with the default
+  `optimizer=auto` Ultralytics ignores it.
+- They were trained on the 85 % split above. Fine-tuning on a different split puts held-out images into training,
+  so held-out scores are no longer held-out scores.
