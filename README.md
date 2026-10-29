@@ -221,6 +221,7 @@ https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt into t
 | `img768_b16` | 768 px input | do bigger objects help new scenes without hurting copies? | ~13 GB / ~4 h |
 | `img768_b8` | 768 px input, batch 8 | the same at batch 8: does batch size matter? | ~7 GB / ~4 h |
 | `control48_seed1`, `img768_b16_seed1` | seed 1 | seed noise for YOLO, never measured so far | as above |
+| `control48_b8`, `control48_b8_seed1` | batch 8; seed 0 and seed 1 | seed noise, and batch 8 vs 16 (fits an 8 GB GPU) | ~6 GB / ~6 h on an RTX 4070 laptop GPU |
 
 A change passes if its val-weighted mAP beats `control48` by at least 0.0068 and its G0 mAP is not lower by more than 0.0049
 (the RMS differences between 8 pairs of earlier runs that differ only in seed).

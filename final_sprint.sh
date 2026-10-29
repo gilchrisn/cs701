@@ -17,6 +17,9 @@ img768_b16()       { train screen48_img768_b16     --epochs 48 --imgsz 768 $BEST
 # Second seeds: no YOLO setup has two seeds yet, so these measure the noise every decision above is judged against.
 control48_seed1()  { train screen48_control_seed1  --epochs 48 --seed 1 $BEST "$@" && score screen48_control_seed1; }
 img768_b16_seed1() { train screen48_img768_b16_seed1 --epochs 48 --imgsz 768 --seed 1 $BEST "$@" && score screen48_img768_b16_seed1; }
+# For 8 GB GPUs: the control at batch 8 with two seeds. Seed 0 vs 1 = seed noise; batch 8 vs control48 (batch 16) = batch-size effect.
+control48_b8()       { train screen48_control_b8       --epochs 48 --batch 8 $BEST "$@" && score screen48_control_b8; }
+control48_b8_seed1() { train screen48_control_b8_seed1 --epochs 48 --batch 8 --seed 1 $BEST "$@" && score screen48_control_b8_seed1; }
 
 # The submission model: all 9,392 labelled images, 96 epochs, KL box loss, plus the winning change as extra arguments,
 # e.g. bash final_sprint.sh final --imgsz 768   or   bash final_sprint.sh final flipud=0.5
