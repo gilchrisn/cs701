@@ -210,7 +210,7 @@ Every earlier run re-scored on these groups shows two patterns:
 
 **Experiments.** `bash final_sprint.sh <name>` trains on the 85 % split for 48 epochs, then scores with
 `tools/score_yolo_holdout.py` (full held-out, G0 / G1 / G2, and val-weighted = 0.412 G0 + 0.325 G1 + 0.264 G2, the shares of the
-official val set). Memory and time are for one RTX A5000 used alone; the 768 px figures are estimates. `yolo26l.pt` (COCO
+official val set). Memory and time are for one RTX A5000 used alone. `yolo26l.pt` (COCO
 weights) downloads on first use; if that times out, get it from
 https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt into this folder.
 
@@ -218,14 +218,13 @@ https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt into t
 |---|---|---|---|
 | `control48` | none | reference for every row below | ~11 GB / ~1.8 h |
 | `vflip48` | vertical flips, `flipud=0.5` | do the views of val's mirrored copies help? | ~11 GB / ~1.8 h |
-| `img768_b16` | 768 px input | do bigger objects help new scenes without hurting copies? | ~13 GB / ~4 h |
-| `img768_b8` | 768 px input, batch 8 | the same at batch 8: does batch size matter? | ~7 GB / ~4 h |
-| `control48_seed1`, `img768_b16_seed1` | seed 1 | seed noise for YOLO, never measured so far | as above |
+| `control48_seed1` | seed 1 | seed noise for YOLO, never measured so far | as above |
 | `control48_b8`, `control48_b8_seed1` | batch 8; seed 0 and seed 1 | seed noise, and batch 8 vs 16 (fits an 8 GB GPU) | ~6 GB / ~6 h on an RTX 4070 laptop GPU |
 
 A change passes if its val-weighted mAP beats `control48` by at least 0.0068 and its G0 mAP is not lower by more than 0.0049
 (the RMS differences between 8 pairs of earlier runs that differ only in seed).
 
-**Submission model.** `bash final_sprint.sh final [winning change]`, e.g. `bash final_sprint.sh final --imgsz 768`: all 9,392
+**Submission model.** `bash final_sprint.sh final [winning change]`, e.g. `bash final_sprint.sh final flipud=0.5`: all 9,392
 labelled images, 96 epochs, KL box loss, then the stripped weights predict the val set at score >= 0.00001 into
-`runs/final/submission_val.zip`. About 4 h at 512 px on one RTX A5000 (about 9.5 h at 768 px, estimated).
+`runs/final/submission_val.zip`. About 4 h on one RTX A5000. The course allows each image in once at ≤ 512 × 512 px, so
+`--imgsz` above 512 is for analysis only, never for a submission.
