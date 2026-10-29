@@ -210,7 +210,9 @@ Every earlier run re-scored on these groups shows two patterns:
 
 **Experiments.** `bash final_sprint.sh <name>` trains on the 85 % split for 48 epochs, then scores with
 `tools/score_yolo_holdout.py` (full held-out, G0 / G1 / G2, and val-weighted = 0.412 G0 + 0.325 G1 + 0.264 G2, the shares of the
-official val set). Memory and time are for one RTX A5000 used alone; the 768 px figures are estimates.
+official val set). Memory and time are for one RTX A5000 used alone; the 768 px figures are estimates. `yolo26l.pt` (COCO
+weights) downloads on first use; if that times out, get it from
+https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt into this folder.
 
 | name | change from our best recipe | question | memory / time |
 |---|---|---|---|
