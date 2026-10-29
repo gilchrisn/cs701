@@ -145,12 +145,14 @@ Accuracy and AP50: [docs/DETAILS.md](docs/DETAILS.md#results-in-full).
 ```
 train.py              entry: train + evaluate one configuration
 train_yolo.py         entry: train or fine-tune YOLO26l-P2 (section 6)
+final_sprint.sh       entry: the final-sprint experiments and the submission model (section 7)
 run_all.sh            the eight reference runs (calls train.py)
 make_submission.py    write_submission(): predictions -> submission.zip
 sarbench/             the code behind train.py
 ├── data.py           images + boxes at 512 × 512, flips; boxes back to original pixels
 ├── backbones.py      ViT (ImageNet-21k), TerraMind-1.0-base
 ├── adapters.py       LoRA, MoE-LoRA on a frozen backbone
+├── yolo_kl.py        KL box loss for YOLO (train_yolo.py --kl)
 ├── model.py          backbone + class head + ViTDet feature pyramid + Faster R-CNN
 └── metrics.py        accuracy, macro-F1, COCO box AP
 tools/                hold-out split, YOLO data and submission, analysis of finished runs
@@ -193,3 +195,34 @@ python tools/predict_submission_yolo.py runs/yolo26lp2_96ep/weights/last.pt --im
   `optimizer=auto` Ultralytics ignores it.
 - They were trained on the 85 % split above. Fine-tuning on a different split puts held-out images into training,
   so held-out scores are no longer held-out scores.
+
+## 7. Final sprint
+
+**What the held-out score measures.** About 57 % of held-out images, and about as many official val images, show a scene that
+is also in the training images: shifted, flipped or nearly identical. `tools/holdout15_seed0_scene_groups.json` splits the
+held-out set into new scenes (G0, 613 images), shifted copies (G1, 359) and near-identical or mirrored copies (G2, 436).
+Every earlier run re-scored on these groups shows two patterns:
+
+- Copied scenes reward memorising the training views. Longer training and fully trained weights help. Augmentation that changes
+  the view (mosaic, scale jitter, rotations) and frozen backbones hurt.
+- New scenes improved only with finer feature maps (the stride-4 P2 output) or multi-scale views. No loss, label-assignment,
+  head or post-processing change moved them.
+
+**Experiments.** `bash final_sprint.sh <name>` trains on the 85 % split for 48 epochs, then scores with
+`tools/score_yolo_holdout.py` (full held-out, G0 / G1 / G2, and val-weighted = 0.412 G0 + 0.325 G1 + 0.264 G2, the shares of the
+official val set). Memory and time are for one RTX A5000 used alone; the 768 px figures are estimates.
+
+| name | change from our best recipe | question | memory / time |
+|---|---|---|---|
+| `control48` | none | reference for every row below | ~11 GB / ~1.8 h |
+| `vflip48` | vertical flips, `flipud=0.5` | do the views of val's mirrored copies help? | ~11 GB / ~1.8 h |
+| `img768_b16` | 768 px input | do bigger objects help new scenes without hurting copies? | ~13 GB / ~4 h |
+| `img768_b8` | 768 px input, batch 8 | the same at batch 8: does batch size matter? | ~7 GB / ~4 h |
+| `control48_seed1`, `img768_b16_seed1` | seed 1 | seed noise for YOLO, never measured so far | as above |
+
+A change passes if its val-weighted mAP beats `control48` by at least 0.0068 and its G0 mAP is not lower by more than 0.0049
+(the RMS differences between 8 pairs of earlier runs that differ only in seed).
+
+**Submission model.** `bash final_sprint.sh final [winning change]`, e.g. `bash final_sprint.sh final --imgsz 768`: all 9,392
+labelled images, 96 epochs, KL box loss, then the stripped weights predict the val set at score >= 0.00001 into
+`runs/final/submission_val.zip`. About 4 h at 512 px on one RTX A5000 (about 9.5 h at 768 px, estimated).

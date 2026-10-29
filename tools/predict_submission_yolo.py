@@ -28,7 +28,7 @@ model = YOLO(str(args.weights.expanduser()))
 preds = {}
 for k in range(0, len(images), 32):
     batch = images[k:k + 32]
-    results = model.predict([str(args.root.expanduser() / im['file_name']) for im in batch], imgsz=512, conf=args.conf, max_det=100,
+    results = model.predict([str(args.root.expanduser() / im['file_name']) for im in batch], imgsz=model.overrides.get('imgsz', 512), conf=args.conf, max_det=100,
                             device=args.device, verbose=False)
     for im, r in zip(batch, results):
         sx, sy = 512 / im['width'], 512 / im['height']  # write_submission takes boxes on a 512 x 512 input
