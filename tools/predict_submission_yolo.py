@@ -32,8 +32,10 @@ for k in range(0, len(images), 32):
                             device=args.device, verbose=False)
     for im, r in zip(batch, results):
         sx, sy = 512 / im['width'], 512 / im['height']  # write_submission takes boxes on a 512 x 512 input
-        boxes = [[x1 * sx, y1 * sy, x2 * sx, y2 * sy] for x1, y1, x2, y2 in r.boxes.xyxy.tolist()]
-        classes, scores = [int(c) for c in r.boxes.cls.tolist()], r.boxes.conf.tolist()
+        # at very low scores the box head can return x2 < x1 or y2 < y1; such boxes break the submission format and never match
+        keep = [(b, int(c), s) for b, c, s in zip(r.boxes.xyxy.tolist(), r.boxes.cls.tolist(), r.boxes.conf.tolist()) if b[2] > b[0] and b[3] > b[1]]
+        boxes = [[x1 * sx, y1 * sy, x2 * sx, y2 * sy] for (x1, y1, x2, y2), _, _ in keep]
+        classes, scores = [c for _, c, _ in keep], [s for _, _, s in keep]
         total = defaultdict(float)
         for c, s in zip(classes, scores):
             total[c] += s
