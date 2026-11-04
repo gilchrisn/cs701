@@ -28,7 +28,7 @@ class SARMultiTask(Dataset):
     An item is (image [1, size, size], label 0..8, target), target = {'boxes': XYXY on the resized
     image, 'labels': 1..9, 'image_id': COCO id, 'orig_size': (h, w)}."""
 
-    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False, copy_paste=False, scale_jitter=None):
+    def __init__(self, root, split, train=False, size=512, limit=None, log_input=False, copy_paste=False, scale_jitter=None, flip_convention=False):
         self.copy_paste = copy_paste if train else False  # False, 'same' (objects of the image itself) or 'other'
         self.scale_jitter = scale_jitter if train else None  # (lo, hi) or None
         self.root = Path(root)
@@ -43,7 +43,8 @@ class SARMultiTask(Dataset):
         for k, row in enumerate(self.rows):
             info = self.coco_images[row['image']]
             self.donors[(row['label'], info['height'], info['width'])].append(k)
-        flips = [v2.RandomHorizontalFlip(), v2.RandomVerticalFlip()] if train else []
+        self.flip_convention = flip_convention and train  # flips done in __getitem__ with the dataset's x' = W - 1 - x labels
+        flips = [v2.RandomHorizontalFlip(), v2.RandomVerticalFlip()] if train and not self.flip_convention else []
         self.transform = v2.Compose([
             v2.ToImage(),
             v2.ConvertBoundingBoxFormat('XYXY'),  # COCO [x, y, w, h] -> [x1, y1, x2, y2]
@@ -71,6 +72,8 @@ class SARMultiTask(Dataset):
         elif self.copy_paste == 'other' and (donor := self.donor(i, row['label'], orig_size)):  # no donor: no paste
             image, boxes, labels = paste_small_objects(image, boxes, labels, orig_size, donor)
         image, boxes = self.transform(image, boxes)
+        if self.flip_convention:  # torchvision flips boxes as x' = W - x; this dataset's own flipped copies are labelled x' = W - 1 - x
+            image, boxes = flip_dataset_convention(image, boxes, orig_size)
         labels = torch.tensor(labels)
         if self.scale_jitter:
             image, boxes, labels = scale_jitter(image, boxes, labels, self.scale_jitter)
@@ -92,6 +95,22 @@ class SARMultiTask(Dataset):
         return (Image.open(self.root / self.rows[j]['image']).convert('L'), [a['bbox'] for a in anns],
                 [a['category_id'] for a in anns])
 
+
+
+def flip_dataset_convention(image, boxes, orig_size):
+    """Random horizontal and vertical flips (p 0.5 each) of a resized square image whose boxes follow the dataset's flip convention:
+    a flipped box lands one ORIGINAL pixel (size / original side, in resized pixels) before torchvision's W - x position."""
+    size = image.shape[-1]
+    for axis, side in ((0, orig_size[1]), (1, orig_size[0])):  # axis 0: horizontal flip (x), 1: vertical flip (y)
+        if random.random() < 0.5:
+            r = size / side
+            image = image.flip(-1 if axis == 0 else -2)
+            lo, hi = (0, 2) if axis == 0 else (1, 3)
+            b = boxes.clone()
+            b[:, lo], b[:, hi] = (size - boxes[:, hi] - r).clamp(min=0), (size - boxes[:, lo] - r).clamp(min=0)
+            b[:, hi] = torch.maximum(b[:, hi], b[:, lo] + 1)  # a box on the far edge would collapse to zero size (NaN in the box coder)
+            boxes = tv_tensors.wrap(b, like=boxes)
+    return image, boxes
 
 
 def paste_small_objects(image, boxes, labels, orig_size, donor=None, p=0.5, max_side_frac=0.125, copies=3, tries=20):

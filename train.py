@@ -20,10 +20,11 @@ from sarbench.model import MultiTaskModel
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--data', type=Path, default=Path(__file__).resolve().parents[1] / 'dataset' / 'SARFact-Course-20K')
-    p.add_argument('--backbone', required=True, choices=['vit', 'terramind'])
+    p.add_argument('--backbone', required=True, choices=['vit', 'dinov3', 'terramind'])
     p.add_argument('--init', required=True, choices=['pretrained', 'scratch'])
     p.add_argument('--adapt', required=True, choices=['full', 'lora', 'moelora', 'mona', 'adapter'])
     p.add_argument('--epochs', type=int, default=24)
+    p.add_argument('--flip-convention', action='store_true', help="flip boxes as the dataset's own flipped copies are labelled (x' = W - 1 - x)")
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--accum', type=int, default=1, help='gradient accumulation: --batch-size / --accum images per forward pass')
     p.add_argument('--lr', type=float, default=1e-4)
@@ -78,7 +79,7 @@ def make_loader(args, split):
     train = split == 'train'
     dataset = SARMultiTask(args.data, split, train=train, limit=args.limit, log_input=args.log_input,
                            copy_paste=('other' if args.paste_from_other else 'same') if args.copy_paste else False,
-                           scale_jitter=args.scale_jitter)
+                           scale_jitter=args.scale_jitter, flip_convention=args.flip_convention)
     return DataLoader(dataset, args.batch_size // args.accum, shuffle=train, num_workers=args.workers, collate_fn=collate,
                       persistent_workers=train and args.workers > 0)  # training workers live across epochs
 

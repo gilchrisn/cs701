@@ -23,6 +23,15 @@ class ViT(nn.Module):
         return tokens[:, self.vit.num_prefix_tokens:]  # drop the CLS token
 
 
+class DINOv3(ViT):
+    """timm DINOv3 ViT-B/16 (self-supervised on 1.7 B web images, LVD-1689M; 85.6 M weights; RoPE + 4 register tokens)."""
+
+    def __init__(self, pretrained: bool):
+        nn.Module.__init__(self)
+        self.vit = timm.create_model('vit_base_patch16_dinov3.lvd1689m', pretrained=pretrained, img_size=512, in_chans=1, num_classes=0)
+        self.embed_dim = 768
+
+
 class TerraMind(nn.Module):
     """TerraMind-1.0-base (IBM/ESA) through its Sentinel-1 GRD input."""
 
@@ -42,5 +51,5 @@ class TerraMind(nn.Module):
 
 
 def build_backbone(name, pretrained):
-    """name: 'vit' or 'terramind'. pretrained=False builds the same architecture with random weights."""
-    return {'vit': ViT, 'terramind': TerraMind}[name](pretrained)
+    """name: 'vit', 'dinov3' or 'terramind'. pretrained=False builds the same architecture with random weights."""
+    return {'vit': ViT, 'dinov3': DINOv3, 'terramind': TerraMind}[name](pretrained)
