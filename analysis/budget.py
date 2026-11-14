@@ -25,11 +25,14 @@ from multiprocessing import Pool
 
 import numpy as np
 
-R = os.path.expanduser('~/cs701/runs')
-OUT = os.environ.get('BUDGET_OUT', f'{R}/error_budget_2026-10-30')  # env overrides added 2026-10-31 for budget 2; defaults unchanged
-GT = os.path.expanduser('~/cs701/data/holdout15_seed0/detection/instances_val.json')
-PRED = os.environ.get('BUDGET_PRED', f'{R}/2026-10-28_yolo26lp2_96ep_nomosaic_noscale_s0/eval_last_conf0.001/predictions_val.json')
-SPLIT = f'{R}/holdout_3group_split_2026-10-30.json'
+# Paths (changed 2026-11-15 from fixed ~/cs701 paths; nothing computed changes): DATA_ROOT holds holdout15_seed0/ (default ./data), BUDGET_PRED is the
+# held-out predictions file to analyse (COCO json, required; the stored results used the 96-epoch mosaic-off model at score >= 0.001),
+# BUDGET_OUT is where outputs go (default analysis/results).
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.environ.get('BUDGET_OUT', os.path.join(HERE, 'results'))
+GT = os.path.join(os.path.expanduser(os.environ.get('DATA_ROOT', 'data')), 'holdout15_seed0', 'detection', 'instances_val.json')
+PRED = os.path.expanduser(os.environ['BUDGET_PRED'])
+SPLIT = os.path.join(HERE, '..', 'tools', 'holdout15_seed0_scene_groups.json')
 TYPES = ('wrong_class', 'loose', 'false_alarm', 'missed')
 THR = np.linspace(0.5, 0.95, 10)
 REC = np.linspace(0, 1, 101)

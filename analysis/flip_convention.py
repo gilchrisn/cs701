@@ -6,13 +6,14 @@
     difference is the mAP a model that follows the dataset's flip convention (instead of the exact flip) could gain on these copies.
 -> flip_convention.txt"""
 import csv, os, sys
+RES = os.environ.get('COPIES_OUT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results'))  # reads copies_pairs.csv, writes flip_convention.txt (2026-11-15: was the working folder)
 from collections import defaultdict
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import budget as B
 from loose_tests import copy_boxes
 from loose_profile import gain_replace
-pairs = {int(r['image_id']): int(r['transform']) for r in csv.DictReader(open('copies_pairs.csv')) if float(r['corr']) >= 0.6 and float(r['overlap']) >= 0.25}
+pairs = {int(r['image_id']): int(r['transform']) for r in csv.DictReader(open(f'{RES}/copies_pairs.csv')) if float(r['corr']) >= 0.6 and float(r['overlap']) >= 0.25}
 CB = copy_boxes()
 off = defaultdict(list); match = []
 for img, m in CB.items():
@@ -42,4 +43,4 @@ exact = {(img, k): None for img, k, b, v in match}
 g_geo, g_conv = gain_replace(geo), gain_replace(conv)
 lines.append(f'owners in flipped-copy images with a copy label: {len(match)}; snapping them to the geometric copy label gains {g_geo:+.4f} mAP, '
              f'to the convention-shifted copy label {g_conv:+.4f}; difference {g_conv - g_geo:+.4f} (measured)')
-open('flip_convention.txt', 'w').write('\n'.join(lines) + '\n'); print('\n'.join(lines))
+open(f'{RES}/flip_convention.txt', 'w').write('\n'.join(lines) + '\n'); print('\n'.join(lines))

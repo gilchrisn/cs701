@@ -6,7 +6,7 @@ Predicts the held-out images (the model's own training input size, score >= --co
   (tools/holdout15_seed0_scene_groups.json, COCO image ids);
 - val-weighted: 0.412 G0 + 0.325 G1 + 0.264 G2, the shares of the official val set, so the closest held-out stand-in for the
   leaderboard.
-KL-trained weights must be stripped first (python -m sarbench.yolo_kl strip <weights>).
+KL-trained weights must be stripped first (python yolo/kl_mod.py strip <weights>).
     python tools/score_yolo_holdout.py runs/screen48_control/weights/last.pt --data data/holdout15_seed0 --out runs/screen48_control/eval
 Scoring an existing predictions file only: --predictions <file> (weights argument ignored)."""
 import argparse

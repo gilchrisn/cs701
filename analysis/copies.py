@@ -22,9 +22,12 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import budget as B  # noqa: E402
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.expanduser('~/cs701/data/holdout15_seed0')
-AC = '/tmp/claude-1000/-mnt-c-Users-Gilchris-UNI-not-school-tutor/2d12b2ea-b2e6-4c7d-be07-33ca6a4dd112/scratchpad/agentC'
+# Paths (changed 2026-11-15): DATA_ROOT holds holdout15_seed0/ (default ./data); COPIES_CANDIDATES is the folder with the candidate lists robust.pkl,
+# robust_mirror.pkl, twins.npz of the earlier same-scene search (NOT in this repo: the folder was a scratch folder and is gone; the stored
+# output of that run is analysis/results/copies_pairs.csv); COPIES_OUT is where outputs go (default analysis/results).
+HERE = os.environ.get('COPIES_OUT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results'))
+DATA = os.path.join(os.path.expanduser(os.environ.get('DATA_ROOT', 'data')), 'holdout15_seed0')
+AC = os.path.expanduser(os.environ.get('COPIES_CANDIDATES', 'candidates'))
 
 
 def img_t(a, v):  # 8 dihedral transforms of an (H, W) array
