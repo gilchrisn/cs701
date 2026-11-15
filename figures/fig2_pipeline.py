@@ -16,7 +16,7 @@ os.makedirs(OUT, exist_ok=True)
 INK, INK2 = '#1F2328', '#5F6670'
 LIB_FC, LIB_EC = '#F3F4F6', '#B4BAC2'      # Ultralytics YOLO26l-P2, unchanged
 OURS_FC, OURS_EC = '#FFF1C1', '#C9A227'    # our changes and additions
-W, H = 6.9, 1.98
+W, H = 6.9, 1.88
 
 plt.rcParams.update({'font.family': 'DejaVu Sans', 'text.color': INK, 'pdf.fonttype': 42})
 fig = plt.figure(figsize=(W, H))
@@ -42,7 +42,7 @@ def heading(x, y, letter, text):
 
 
 # ---------------- row A: finding copies of training images (all ours)
-yA, hA, wA, gA = 1.08, 0.62, (6.8 - 2 * 0.32) / 3, 0.32
+yA, hA, wA, gA = 1.02, 0.6, (6.8 - 2 * 0.32) / 3, 0.32
 heading(0.05, yA + hA + 0.06, 'A', 'Train\u2013test overlap')
 xa = [0.05, 0.05 + wA + gA, 0.05 + 2 * (wA + gA)]
 box(xa[0], yA, wA, hA, 'Match to the training set', 'each held-out, val and test image\nagainst every training image,\nalso after flipping it', ours=True)
@@ -52,7 +52,7 @@ for i in range(2):
     arrow(xa[i] + wA, yA + hA / 2, xa[i + 1], yA + hA / 2)
 
 # ---------------- row B: the detector
-yB, hB = 0.04, 0.74
+yB, hB = 0.03, 0.7
 heading(0.05, yB + hB + 0.06, 'B', 'Training and prediction')
 ws = [1.0, 1.35, 1.85, 1.25, 1.0]
 names = [('Input', 'grey SAR image,\n512 px', False),

@@ -37,8 +37,8 @@ plt.rcParams.update({
     'axes.spines.top': False, 'axes.spines.right': False, 'axes.linewidth': 0.5, 'xtick.major.width': 0.5,
     'ytick.major.width': 0.5, 'xtick.major.size': 2, 'ytick.major.size': 2, 'pdf.fonttype': 42})
 
-fig, axes = plt.subplots(2, 1, figsize=(6.9, 3.1), sharex=True)
-fig.subplots_adjust(left=0.075, right=0.86, bottom=0.145, top=0.935, hspace=0.34)
+fig, axes = plt.subplots(2, 1, figsize=(6.9, 2.72), sharex=True)
+fig.subplots_adjust(left=0.075, right=0.86, bottom=0.165, top=0.925, hspace=0.38)
 
 
 def panel(ax, series, title, overall_line=True, phase_note=True):

@@ -21,7 +21,7 @@ groups = [('Backbone', ['YOLO26x, 8 layers frozen', 'ConvNeXt-B', 'DINOv2 featur
           ('Box loss', ['NWD loss', 'DFL']),
           ('Input and augmentation', ['Oversampling bridge images', 'SAR-derived input channels', 'Copy-paste'])]
 f = S.P(COL, 2.05, OUT)
-axx, axw, axy, axh = 1.55, 1.65, 0.4, 1.5
+axx, axw, axy, axh = 1.55, 1.65, 0.4, 1.4
 ax = f.ax(axx, axy, axw, axh)
 ax.axvspan(-band, band, color='#E4E7EB', zorder=0, lw=0)
 y = 0.0
@@ -49,5 +49,5 @@ ax.set_xlabel('change in held-out mAP\nvs control (points)', labelpad=2)
 tr = mtrans.blended_transform_factory(f.fig.transFigure, ax.transData)
 for yy, g in heads:
     ax.text(0.05 / COL, yy, g, transform=tr, ha='left', va='center', fontsize=7, color=MUTED, clip_on=False)
-ax.text(0, 0.62, 'seed noise', ha='center', va='bottom', fontsize=7, color=MUTED, clip_on=False)
+ax.text(0, 0.62, 'run-to-run\nvariation', ha='center', va='bottom', fontsize=6.5, color=MUTED, clip_on=False, linespacing=1.0)
 f.save('fig4_failed_changes')
