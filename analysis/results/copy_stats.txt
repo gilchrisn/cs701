@@ -1,0 +1,19 @@
+held-out copies (near-duplicate + overlapping crop images): 795; aligned (corr >= 0.6, overlap >= 25%): 682
+near-duplicates: 436 in the group, 375 aligned, median correlation 0.9640
+  whole copies (no shift, overlap >= 0.95): 334; by transform: 0 276, 3 58
+  shifted: 41; median larger shift component 68 px, median overlap 0.8670
+crops: 359 in the group, 307 aligned, median correlation 0.9980
+  whole copies (no shift, overlap >= 0.95): 83; by transform: 0 19, 1 17, 3 47
+  shifted: 224; median larger shift component 96 px, median overlap 0.6875
+all aligned copies: median correlation 0.9845
+share of held-out images per class in each overlap group (%): class | n images | no match | overlapping crop | near-duplicate
+  wind turbine  138 |   1.4 |  18.8 |  79.7
+  oil tank      185 |  15.7 |  39.5 |  44.9
+  harbor        203 |  18.2 |  14.3 |  67.5
+  aircraft      177 |  20.3 |  72.9 |   6.8
+  airport        98 |  20.4 |  25.5 |  54.1
+  car            66 |  63.6 |  33.3 |   3.0
+  playground    176 |  68.8 |  19.9 |  11.4
+  bridge        187 |  85.6 |   9.1 |   5.3
+  ship          178 |  93.3 |   1.7 |   5.1
+  all          1408 |  43.5 |  25.5 |  31.0   (counts 613 / 359 / 436)

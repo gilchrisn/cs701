@@ -7,3 +7,4 @@ torchgeo==0.9.0  # terratorch 1.2.7 imports torchgeo.trainers.utils, removed in 
 pycocotools==2.0.11
 pytest==9.1.1
 ultralytics==8.4.182  # YOLO26l-P2 (train_yolo.py, tools/*yolo*.py)
+matplotlib==3.11.2  # figures/ (Figs. 1, 2, 3 and 5 of the report were drawn with 3.10.8; see Section 6)

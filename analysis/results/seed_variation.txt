@@ -1,0 +1,9 @@
+ViT 8 ep reference                       seed 0 0.1360  seed 1 0.1321  gap +0.39 points
+Cascade 8 ep                             seed 0 0.1596  seed 1 0.1587  gap +0.09 points
+ViT 24 ep reference                      seed 0 0.2318  seed 1 0.2206  gap +1.12 points
+Cascade 24 ep                            seed 0 0.2624  seed 1 0.2560  gap +0.64 points
+Cascade 8 ep + Balanced L1               seed 0 0.1707  seed 1 0.1646  gap +0.61 points
+Cascade 8 ep + box-loss weight 1.5       seed 0 0.1672  seed 1 0.1634  gap +0.38 points
+Cascade 48 + 8-ep fine-tune control      seed 0 0.3299  seed 1 0.3308  gap -0.09 points
+ViT 24 + 8-ep fine-tune control          seed 0 0.2441  seed 1 0.2461  gap -0.20 points
+root mean square over 8 pairs: 0.55 points of held-out mAP

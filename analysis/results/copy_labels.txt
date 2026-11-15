@@ -1,0 +1,22 @@
+label IoU between held-out boxes and mapped training-copy boxes: class | group | n boxes | median label IoU
+  aircraft     G1  n  194 | median 1.000
+  aircraft     G2  n   18 | median 0.810
+  airport      G1  n   34 | median 0.980
+  airport      G2  n   76 | median 1.000
+  bridge       G1  n   47 | median 0.819
+  bridge       G2  n   25 | median 1.000
+  car          G1  n   32 | median 0.836
+  harbor       G1  n   48 | median 0.908
+  harbor       G2  n  274 | median 1.000
+  oil tank     G1  n  241 | median 1.000
+  oil tank     G2  n  371 | median 1.000
+  playground   G1  n   90 | median 0.798
+  playground   G2  n   44 | median 1.000
+  ship         G1  n    2 | median 0.827
+  ship         G2  n    1 | median 0.548
+  wind turbine G1  n  150 | median 0.620
+  wind turbine G2  n  846 | median 1.000
+copy ceiling on 276 unshifted, unrotated near-duplicate copies (held-out COCO mAP):
+  training copy boxes as predictions: 0.9075
+  144-epoch 85% model: 0.6975
+  exact-copy fine-tune: 0.7674

@@ -56,7 +56,7 @@ This writes the leaderboard zip (`classification.csv` and `detection.json`). On 
 
 ## 3. Reproduce every step of the report
 
-Each command trains one step of Fig. 4 in the report on the 85% split. The variant names are explained at the top of
+Each command trains one step of Fig. 3 in the report on the 85% split. The variant names are explained at the top of
 `yolo/train_variants.py`.
 
 ```
@@ -132,6 +132,53 @@ in unflipped copies the edges agree. So the dataset flips boxes with x' = W - 1 
 `copies_pairs.csv` was made by an earlier alignment step (each candidate copy tried under the 8 flips and rotations and a shift);
 its inputs were not kept, so the pairs are stored here as data.
 
+## 6. Every figure and number of the report
+
+Run from the repository root, after the held-out split of "Data" exists. Each figure script writes `figures/out/<name>.pdf` and `.png`
+(`--out` changes the folder; fig2 and fig3 need no `--data`).
+
+| report | command | reads |
+|---|---|---|
+| Fig. 1, a held-out image, its flipped training copy, and overlap shares by split | `python figures/fig1_near_duplicates.py` | held-out split, `analysis/results/copies_pairs.csv`, `analysis/results/test_groups.txt`, `tools/holdout15_seed0_scene_groups.json` |
+| Fig. 2, pipeline diagram | `python figures/fig2_pipeline.py` | nothing |
+| Fig. 3, held-out mAP after each step | `python figures/fig3_journey.py` | `analysis/results/chain_metrics.json` (made by Section 3's `chain_metrics.py` command) |
+| Fig. 4, eleven changes against their control | `python figures/fig4_failed_changes.py` | `figures/data/failed_changes.csv`, `figures/data/seed_pairs.csv` |
+| Fig. 5, one box edge of a flipped copy | `python figures/fig5_flip_pixels.py` | held-out split, `analysis/results/copies_pairs.csv` |
+| Fig. 6, a crop, a rotated near-duplicate, overlap and AP per class | `python figures/fig6_copies.py` | held-out split, `analysis/results/copies_pairs.csv`, `analysis/results/chain_metrics.json` |
+| Table of held-out mAP per step (Sec. 3) | `python analysis/chain_metrics.py --data data --runs runs` | the predictions of Section 3 |
+| 1 px flip offsets (Sec. 5) | `python analysis/flip_convention.py --data data/holdout15_seed0` | held-out split, `copies_pairs.csv` |
+
+Fig. 4 compares runs we trained in October on the 85% split; the repository does not contain those runs. `figures/data/failed_changes.csv`
+stores the held-out mAP of each change and of its control (columns `mAP_change`, `mAP_control`; the last column names the file in our run store each
+number came from, or the note in our log for the three that were only logged). The figure plots the difference. To redo
+one row, train the change with the recipe of the step it modifies and score it as in Section 3.
+`figures/data/seed_pairs.csv` has the same for the eight pairs of runs that differ only in the seed.
+
+The figures use DejaVu Sans. Matplotlib 3.10.8 rendered Figs. 1, 2, 3 and 5 of the report and 3.11.2 rendered Figs. 4 and 6; with the
+version we used for each, the scripts reproduce the report's PNGs pixel for pixel. With the other version the text is a few percent wider or narrower.
+
+Numbers in the text of Sec. 5:
+
+```
+python analysis/copy_stats.py --data data/holdout15_seed0
+python analysis/copy_labels.py --data data/holdout15_seed0 --preds runs/final85_eval/predictions_val.json
+python analysis/seed_variation.py
+```
+- `copy_stats.py` (writes `analysis/results/copy_stats.txt`): 795 held-out copies, 682 aligned (correlation >= 0.6, overlap >= 25%); median
+  correlation 0.96 for near-duplicates (375 aligned); 334 of them whole copies (no shift, overlap >= 0.95), 276 unrotated and 58 rotated by 180
+  degrees; crops: 307 aligned, 224 shifted (median larger shift component 96 px, median overlap 0.69), 83 whole copies; the share of each overlap
+  group per class. Median correlation of the crops is 0.998, which the report writes as 0.99.
+- `copy_labels.py` (writes `analysis/results/copy_labels.txt`): per class and group, the median IoU between a held-out box and the same box
+  mapped from the training copy (1.000 for near-duplicates in most classes, 0.620 for wind turbines in crops). Then, on the 276
+  unrotated, unshifted near-duplicates, the training copy's boxes used as predictions score 0.9075 mAP. The model on the same images
+  scores 0.6975 with predictions made at `--conf 0.00001` (`score_yolo_holdout.py ... --conf 0.00001`; the default `--conf 0.001` gives 0.6971), and 0.7674
+  for the exact-copy fine-tune (`--preds-ft`, 24 epochs). Using the copy's boxes is not allowed as a method; this is only an upper bound for
+  memorising the copies better.
+- `seed_variation.py`: the eight pairs and their root mean square, 0.55 points of held-out mAP.
+
+We checked these numbers against the stored predictions of our October-November runs; the results were identical to the values above.
+We did not re-run them from the shipped checkpoints.
+
 ## Layout
 
 ```
@@ -139,6 +186,7 @@ weights/    the two final checkpoints
 yolo/       train_variants.py (training recipe), kl_mod.py (KL box loss), flipconv_mod.py (dataset flip convention)
 tools/      make_holdout.py, make_yolo_data.py, score_yolo_holdout.py, predict_submission_yolo.py,
             analyze.py (AP code used by chain_metrics.py), holdout15_seed0_scene_groups.json
-analysis/   chain_metrics.py, overlap_groups.py, flip_convention.py, results/ (stored outputs)
+analysis/   chain_metrics.py, overlap_groups.py, flip_convention.py, copy_stats.py, copy_labels.py, seed_variation.py, results/ (stored outputs)
+figures/    fig1 to fig6 scripts for the report's figures, _style.py (shared look), data/ (small inputs that cannot be recomputed here)
 train.py, sarbench/, make_submission.py   course model and Cascade R-CNN; make_submission.py writes the leaderboard zip
 ```

@@ -1,0 +1,9 @@
+pair,run_seed0,run_seed1,mAP_seed0,mAP_seed1
+ViT 8 ep reference,2026-10-08_ref_s0,2026-10-08_ref_s1,0.136,0.1321
+Cascade 8 ep,2026-10-08_cascade_s0,2026-10-08_cascade_s1,0.1596,0.1587
+ViT 24 ep reference,2026-10-08_ref24_s0,2026-10-09_ref24_s1,0.2318,0.2206
+Cascade 24 ep,2026-10-09_cascade24_s0,2026-10-09_cascade24_s1,0.2624,0.256
+Cascade 8 ep + Balanced L1,2026-10-10_cascade_bl1_s0,2026-10-10_cascade_bl1_s1,0.1707,0.1646
+Cascade 8 ep + box-loss weight 1.5,2026-10-10_cascade_boxw1.5_s0,2026-10-11_cascade_boxw1.5_s1,0.1672,0.1634
+Cascade 48 + 8-ep fine-tune control,2026-10-19_ft8_c48_control_s0,2026-10-19_ft8_c48_control_s1,0.3299,0.3308
+ViT 24 + 8-ep fine-tune control,2026-10-19_ft8_ref24_control_s0,2026-10-19_ft8_ref24_control_s1,0.2441,0.2461
