@@ -1,4 +1,4 @@
-"""Fig. 1 of the report: (a) a held-out image next to its flipped training copy and their difference, (b) the share of images
+"""Fig. 1 of the report: (a) a held-out image next to its flipped training copy and their difference, (b) the percentage of images
 in each overlap group in the held-out, validation and test sets.
 Reads: the held-out split (--data), analysis/results/copies_pairs.csv, tools/holdout15_seed0_scene_groups.json (held-out group counts),
 analysis/results/test_groups.txt (validation and test group counts).
@@ -57,7 +57,7 @@ for i, (n, c) in enumerate(splits):
         ax.text(left + v / 2, i, f'{v:.0f}', ha='center', va='center', fontsize=7, color=S.INK)
         left += v
 ax.set_yticks(range(3)); ax.set_yticklabels([n for n, _ in splits]); ax.invert_yaxis()
-ax.set_xlim(0, 100); ax.set_ylim(2.5, -0.5); ax.set_xticks([0, 50, 100]); ax.set_xlabel('share of images (%)', labelpad=1)
+ax.set_xlim(0, 100); ax.set_ylim(2.5, -0.5); ax.set_xticks([0, 50, 100]); ax.set_xlabel('images (%)', labelpad=1)
 ax.spines['left'].set_visible(False); ax.tick_params(axis='y', length=0)
 c = splits[0][1]
 tot = sum(c)

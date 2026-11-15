@@ -139,7 +139,7 @@ Run from the repository root, after the held-out split of "Data" exists. Each fi
 
 | report | command | reads |
 |---|---|---|
-| Fig. 1, a held-out image, its flipped training copy, and overlap shares by split | `python figures/fig1_near_duplicates.py` | held-out split, `analysis/results/copies_pairs.csv`, `analysis/results/test_groups.txt`, `tools/holdout15_seed0_scene_groups.json` |
+| Fig. 1, a held-out image, its flipped training copy, and the percentage of images in each overlap group, by split | `python figures/fig1_near_duplicates.py` | held-out split, `analysis/results/copies_pairs.csv`, `analysis/results/test_groups.txt`, `tools/holdout15_seed0_scene_groups.json` |
 | Fig. 2, pipeline diagram | `python figures/fig2_pipeline.py` | nothing |
 | Fig. 3, held-out mAP after each step | `python figures/fig3_journey.py` | `analysis/results/chain_metrics.json` (made by Section 3's `chain_metrics.py` command) |
 | Eleven changes against their control (talk; Sec. 4.2 text) | `python figures/extra_failed_changes.py` | `figures/data/failed_changes.csv`, `figures/data/seed_pairs.csv` |
@@ -167,7 +167,7 @@ python analysis/seed_variation.py
 ```
 - `copy_stats.py` (writes `analysis/results/copy_stats.txt`): 795 held-out copies, 682 aligned (correlation >= 0.6, overlap >= 25%); median
   correlation 0.96 for near-duplicates (375 aligned); 334 of them whole copies (no shift, overlap >= 0.95), 276 unrotated and 58 rotated by 180
-  degrees; crops: 307 aligned, 224 shifted (median larger shift component 96 px, median overlap 0.69), 83 whole copies; the share of each overlap
+  degrees; crops: 307 aligned, 224 shifted (median larger shift component 96 px, median overlap 0.69), 83 whole copies; the percentage of each overlap
   group per class. Median correlation of the crops is 0.998.
 - `copy_labels.py` (writes `analysis/results/copy_labels.txt`): per class and group, the median IoU between a held-out box and the same box
   mapped from the training copy (1.000 for near-duplicates in most classes, 0.620 for wind turbines in crops). Then, on the 276
@@ -188,7 +188,7 @@ yolo/       train_variants.py (training recipe), kl_mod.py (KL box loss), flipco
 tools/      make_holdout.py, make_yolo_data.py, score_yolo_holdout.py, predict_submission_yolo.py,
             analyze.py (AP code used by chain_metrics.py), holdout15_seed0_scene_groups.json
 analysis/   chain_metrics.py, overlap_groups.py, flip_convention.py, copy_stats.py, copy_labels.py, seed_variation.py, results/ (stored outputs)
-figures/    fig1 to fig6 scripts for the report's figures, _style.py (shared look), data/ (small inputs that cannot be recomputed here)
+figures/    fig1 to fig5 scripts and the eleven-change plot for the report's figures, _style.py (shared look), data/ (small inputs that cannot be recomputed here)
 train.py, sarbench/, make_submission.py   course model and Cascade R-CNN; make_submission.py writes the leaderboard zip
 ```
 

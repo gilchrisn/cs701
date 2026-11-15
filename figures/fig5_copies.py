@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Fig. 5 of the report: copies in detail. (a) an overlapping crop and its training image, (b) a near-duplicate rotated by 180
-degrees, (c) per class, the share of held-out images in each overlap group, with the final model's held-out AP.
+degrees, (c) per class, the percentage of held-out images in each overlap group, with the final model's held-out AP.
 Reads: the held-out split (--data), analysis/results/copies_pairs.csv, tools/holdout15_seed0_scene_groups.json,
 analysis/results/chain_metrics.json (per-class AP of the final 144-epoch recipe).
 Usage: python figures/fig5_copies.py [--data data/holdout15_seed0] [--out figures/out]"""
@@ -102,7 +102,7 @@ show(ax_at(xb), hi, hob[hi['id']], 'held-out image')
 show(ax_at(xb + S + gap), ti, trb[ti['id']], 'training image')
 title(xb, '(b)', 'near-duplicate, rotated 180°')
 
-# (c) per class: share of held-out images in each overlap group, and the final model's held-out AP
+# (c) per class: percentage of held-out images in each overlap group, and the final model's held-out AP
 grp = {i: g for g, ids in json.load(open(f'{REPO}/tools/holdout15_seed0_scene_groups.json')).items() for i in ids}
 imcls = {a['image_id']: cls[a['category_id']] for a in ho['annotations']}
 tab = {}
@@ -123,7 +123,7 @@ ac.text(103, -0.55, 'AP', va='bottom', ha='left', fontsize=6.6, color=INK2)
 ac.set_yticks(range(len(order))); ac.set_yticklabels(order); ac.tick_params(axis='y', length=0)
 ac.set_xlim(0, 100); ac.set_xticks([0, 50, 100]); ac.set_ylim(len(order) - 0.5, -0.5)
 ac.spines['left'].set_visible(False)
-ac.set_xlabel('share of held-out images (%)', fontsize=6.6, labelpad=1)
+ac.set_xlabel('held-out images (%)', fontsize=6.6, labelpad=1)
 title(xc - 0.62, '(c)', 'overlap by class')
 for k, (g, lab) in enumerate((('G2', 'near-duplicate'), ('G1', 'crop'), ('G0', 'no match'))):
     lx = xc - 0.62 + (0, 0.84, 1.24)[k]
