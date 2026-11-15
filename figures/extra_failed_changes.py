@@ -1,7 +1,7 @@
-"""Fig. 4 of the report: change in held-out mAP of eleven changes against their control runs (grey band: run-to-run variation).
+"""Eleven changes against their control runs (shown in the talk; summarized in the text of Sec. 4.2 of the report): change in held-out mAP (grey band: run-to-run variation).
 Reads figures/data/failed_changes.csv (held-out mAP of each change and of its control; origin of every number in that file) and
 figures/data/seed_pairs.csv (the eight seed pairs whose root mean square gives the grey band).
-Usage: python figures/fig4_failed_changes.py [--out figures/out]"""
+Usage: python figures/extra_failed_changes.py [--out figures/out]"""
 import csv
 import math
 import os
@@ -50,4 +50,4 @@ tr = mtrans.blended_transform_factory(f.fig.transFigure, ax.transData)
 for yy, g in heads:
     ax.text(0.05 / COL, yy, g, transform=tr, ha='left', va='center', fontsize=7, color=MUTED, clip_on=False)
 ax.text(0, 0.62, 'run-to-run\nvariation', ha='center', va='bottom', fontsize=6.5, color=MUTED, clip_on=False, linespacing=1.0)
-f.save('fig4_failed_changes')
+f.save('extra_failed_changes')

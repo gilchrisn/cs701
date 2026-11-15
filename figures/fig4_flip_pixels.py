@@ -1,7 +1,7 @@
-"""Fig. 5 of the report: one box edge of a horizontally flipped training copy, in the dataset's labels and with Ultralytics' flip.
+"""Fig. 4 of the report: one box edge of a horizontally flipped training copy, in the dataset's labels and with Ultralytics' flip.
 Reads the held-out split (--data) and analysis/results/copies_pairs.csv. The assert checks the dataset's box is 1 px left of the
 exactly flipped box in both edges.
-Usage: python figures/fig5_flip_pixels.py [--data data/holdout15_seed0] [--out figures/out]"""
+Usage: python figures/fig4_flip_pixels.py [--data data/holdout15_seed0] [--out figures/out]"""
 import numpy as np
 
 import _style as S
@@ -70,6 +70,6 @@ xl = x00 + 1.35
 o.plot([xl, xl + 0.22], [ly, ly], color=S.LIB_C, lw=1.2, ls=(0, (3, 1.5))); o.text(xl + 0.28, ly, 'Ultralytics box', va='center', fontsize=7)
 o.text(x00, 0.14, 'grid square = 1 px', fontsize=7, color=S.MUTED, va='center')
 o.text(xs[2] + Pw, 0.14, f'IoU of the two boxes: {v:.2f}', fontsize=7, va='center', ha='right')
-f.save('fig5_flip_pixels')
+f.save('fig4_flip_pixels')
 
 

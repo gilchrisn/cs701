@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""Fig. 6 of the report: copies in detail. (a) an overlapping crop and its training image, (b) a near-duplicate rotated by 180
+"""Fig. 5 of the report: copies in detail. (a) an overlapping crop and its training image, (b) a near-duplicate rotated by 180
 degrees, (c) per class, the share of held-out images in each overlap group, with the final model's held-out AP.
 Reads: the held-out split (--data), analysis/results/copies_pairs.csv, tools/holdout15_seed0_scene_groups.json,
 analysis/results/chain_metrics.json (per-class AP of the final 144-epoch recipe).
-Usage: python figures/fig6_copies.py [--data data/holdout15_seed0] [--out figures/out]"""
+Usage: python figures/fig5_copies.py [--data data/holdout15_seed0] [--out figures/out]"""
 import argparse
 import csv
 import json
@@ -130,8 +130,8 @@ for k, (g, lab) in enumerate((('G2', 'near-duplicate'), ('G1', 'crop'), ('G0', '
     fig.patches.append(Rectangle((lx / 6.9, 1.4 / 1.62), 0.07 / 6.9, 0.07 / 1.62, transform=fig.transFigure, fc=GCOL[g], ec='none'))
     fig.text((lx + 0.1) / 6.9, 1.435 / 1.62, lab, fontsize=6.2, va='center', color=INK2)
 
-fig.savefig(f'{OUT}/fig6_copies.pdf')
-fig.savefig(f'{OUT}/fig6_copies.png', dpi=200)
+fig.savefig(f'{OUT}/fig5_copies.pdf')
+fig.savefig(f'{OUT}/fig5_copies.png', dpi=200)
 print('crop pair', crop['image_id'], crop['copy_id'], 'dx', crop['dx'], 'dy', crop['dy'], 'overlap', crop['overlap'])
 print('rot pair', rot['image_id'], rot['copy_id'], 'corr', rot['corr'])
-print('built', f'{OUT}/fig6_copies.pdf')
+print('built', f'{OUT}/fig5_copies.pdf')
