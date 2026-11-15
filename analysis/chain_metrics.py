@@ -1,4 +1,4 @@
-"""Every stage of the talk's model chain scored the same way on the held-out split: detections with score >= 0.05, at most 100 per
+"""Every step of the report's chain of models scored the same way on the held-out split: detections with score >= 0.05, at most 100 per
 image (the course models only stored >= 0.05, so this is the one cut-off all stages share). Writes chain_metrics.json (default analysis/results/, --out)."""
 import argparse
 import json, sys
@@ -7,8 +7,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from analyze import SIDE_BINS, ap_from_precision, coco_eval, to_512
 
-# Paths (changed 2026-11-15 from fixed ~/cs701 paths; nothing computed changes). --runs: folder holding the run folders named in ROWS
-# (each run's predictions_val.json, written by tools/score_yolo_holdout.py or tools/infer.py / train.py); --data: folder holding holdout15_seed0/.
+# --runs: folder holding the run folders named in ROWS
+# (each run's predictions_val.json, written by tools/score_yolo_holdout.py or train.py); --data: folder holding holdout15_seed0/.
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('--data', type=Path, default=Path('data'))
 ap.add_argument('--runs', type=Path, default=Path('runs'))
@@ -21,17 +21,17 @@ gt = json.loads((args.data.expanduser() / 'holdout15_seed0/detection/instances_v
 names = [c['name'].replace('_', ' ') for c in sorted(gt['categories'], key=lambda c: c['id'])]
 split = json.loads((Path(__file__).resolve().parents[1] / 'tools' / 'holdout15_seed0_scene_groups.json').read_text())
 W = {'G0': 587 / 1426, 'G1': 463 / 1426, 'G2': 376 / 1426}
-ROWS = {
- 'course_vit_lora_24ep': '2026-10-08_ref24_s0/predictions_val.json',
- 'cascade_24ep': '2026-10-09_cascade24_s0/predictions_val.json',
- 'cascade_best_48+24ep': '2026-10-19_ft24_c48_s0_laptop/predictions_val.json',
- 'yolo26lp2_96ep_mosaic_on': '2026-10-20_yolo26lp2_96ep_s0/eval_last/predictions_val.json',
- 'mosaic_scale_off': '2026-10-28_yolo26lp2_96ep_nomosaic_noscale_s0/eval_last/predictions_val.json',
- 'kl_box_loss': '2026-10-29_yolo26lp2_96ep_kl_s0/eval_last_conf0.001/predictions_val.json',
- 'flip_convention_plus_vflip': '2026-10-31_yolo26lp2_96ep_kl_flipconv_s0/eval_last_conf0.001/predictions_val.json',
- 'epochs_144_final_recipe_85pct': '2026-10-31_yolo26lp2_144ep_kl_flipconv_s0/eval_last_conf0.001/predictions_val.json',
- 'exact_copy_ft24_post_competition': '2026-11-02_yolo144_exact_ft24_s0/eval_last_conf0.00001/predictions_val.json',
- 'exact_copy_ft48_post_competition': '2026-11-05_yolo144_exact_ft48_s0/eval_last_conf0.00001/predictions_val.json',
+ROWS = {  # run folder under --runs (as named by the README commands) -> its predictions_val.json
+ 'course_vit_lora_24ep': 'course24/predictions_val.json',
+ 'cascade_24ep': 'cascade24/predictions_val.json',
+ 'cascade_best_48+24ep': 'cascade48_ft24/predictions_val.json',
+ 'yolo26lp2_96ep_mosaic_on': 'yolo_mosaic_on_eval/predictions_val.json',
+ 'mosaic_scale_off': 'yolo_mosaic_off_eval/predictions_val.json',
+ 'kl_box_loss': 'yolo_kl_eval/predictions_val.json',
+ 'flip_convention_plus_vflip': 'yolo_kl_flip_eval/predictions_val.json',
+ 'epochs_144_final_recipe_85pct': 'final85_eval/predictions_val.json',
+ 'exact_copy_ft24_post_competition': 'ft24_eval/predictions_val.json',
+ 'exact_copy_ft48_post_competition': 'ft48_eval/predictions_val.json',
 }
 def subset(ids):
     s = set(ids)

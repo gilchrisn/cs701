@@ -1,5 +1,5 @@
-"""KL box loss (He et al. 2019, arXiv 1809.08545) for Ultralytics 8.4.182 YOLO, moved unchanged from ft_variants_2026-10-27.py (D34) so full
-runs can use it (D55). apply(): every box head's last 1x1 conv 4 -> 8 outputs (ltrb + per-edge log-variance; old weights kept, new rows
+"""KL box loss (He et al. 2019, arXiv 1809.08545) for Ultralytics 8.4.182 YOLO.
+apply(): every box head's last 1x1 conv 4 -> 8 outputs (ltrb + per-edge log-variance; old weights kept, new rows
 zero), the CIoU term unchanged, the L1 term replaced by the KL loss (smooth-L1 form, log-variance clamped >= -7).
 strip(ckpt): scoring loads the stock head, which would silently reshape an 8-channel output, so write <ckpt>_stripped.pt with the variance
 rows removed and check it predicts the same boxes. CLI: python kl_mod.py strip <ckpt.pt>"""

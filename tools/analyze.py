@@ -11,7 +11,7 @@ Writes <run>/analysis.json and prints a summary:
       miss  ground-truth boxes that no detection of any class overlaps (IoU >= 0.1) are removed from the ground truth
   - post-hoc fixes that need no labels: relabel to the PREDICTED image class (+ NMS 0.5); rescoring s' = s * p_cls(c)
   - TIDE (Bolya et al., ECCV 2020) dAP per error type, at its default IoU 0.5 (AP50, not mAP)
-Example: python tools/analyze.py ~/cs701-runs/2026-10-08_ref_s0"""
+Example: python tools/analyze.py runs/course24"""
 import contextlib
 import copy
 import csv

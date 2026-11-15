@@ -1,6 +1,6 @@
-"""Scene groups for val (sanity check vs groups3_mirror_out.txt: G0 587 / G1 463 / G2 376) and test, against all labelled images
-(train + held = the 9,392 images). Same rules as agentC/groups3_mirror.py (a scratch script that no longer exists; the held-out split's groups
-in tools/holdout15_seed0_scene_groups.json come from it and are stored, not recomputed here). Stored result of this script: results/test_groups.txt.
+"""Overlap groups of the validation and test images, each compared with all 9,392 labelled images.
+The held-out split's groups (tools/holdout15_seed0_scene_groups.json) were made earlier with the same rules by a script we did not keep;
+they are stored, not recomputed here. Stored result of this script: results/test_groups.txt.
 Rules:
   G2: max edge-cosine over {identity, h-flip, v-flip} of the query >= 0.8
   G1: not G2, ORB+RANSAC (identity or h-flipped query) >= 30 inliers spread over >= 8 of 64 cells, candidates = top-40 by 3 descriptors

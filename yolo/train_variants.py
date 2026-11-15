@@ -3,11 +3,12 @@
   kl        KL box loss (kl_mod, He et al. 2019); score the stripped weights (python yolo/kl_mod.py strip <ckpt>)
   flipconv  flips map boxes with the dataset convention x' = W - 1 - x (flipconv_mod); vertical flip 0.5 on top of horizontal 0.5
   exact     no HSV and no translation jitter (the post-deadline fine-tune)
+  ultralytics  mosaic 1.0 and scale 0.5, the Ultralytics defaults (the first YOLO26l-P2 step of the report)
   none      no change
 Final model: kl+flipconv, 144 epochs. Post-deadline fine-tune: kl+flipconv+exact with INIT_FROM=<stripped 144-epoch checkpoint>, 48 epochs.
 Epoch counts other than 96 pin optimizer=MuSGD lr0=0.01 momentum=0.9 (Ultralytics 'auto' picks MuSGD only above 10,000 steps).
 Run from the folder holding yolo26l.pt. Usage: python train_variants.py <variant> <name> <data.yaml> <batch> <project> [epochs] [fraction] [seed]
-(fraction is for smoke tests only). Reduced on 2026-11-15 from research/scripts/train_variants_2026-10-29.py: the other variants were dropped."""
+(fraction is for smoke tests only). """
 import os
 import sys
 
@@ -30,6 +31,8 @@ for variant in variants:
         extra['flipud'] = 0.5
     elif variant == 'exact':  # no photometric or translation jitter, flips only
         extra.update(hsv_h=0.0, hsv_s=0.0, hsv_v=0.0, translate=0.0)
+    elif variant == 'ultralytics':  # the library's default mosaic and scale jitter (the report's 'mosaic on' step)
+        extra.update(mosaic=1.0, scale=0.5)
     elif variant != 'none':
         raise SystemExit(f'unknown variant {variant}')
 if epochs != 96:  # Ultralytics 'auto' gives MuSGD lr 0.01 momentum 0.9 only above 10,000 steps (96 ep); pin it for shorter or longer runs

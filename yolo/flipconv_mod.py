@@ -1,6 +1,6 @@
-"""D73: flip augmentation that maps boxes with the dataset's own convention. The labelled data's flipped copies carry x' = W - 1 - x on both
-box edges (exact-flip pairs: -1 px on flipped axes only, 89-93% of 5,294 boxes; error_budget_2026-10-30/review_agent/lab_flip_pairs.txt),
-while Ultralytics' RandomFlip maps x' = W - x, so every flipped training view is 1 original px off (best run: +0.27 px x bias).
+"""Flip augmentation that maps boxes with the dataset's own formula. In the labelled data, flipped copies follow x' = W - 1 - x on both
+box edges (measured by analysis/flip_convention.py), while Ultralytics' RandomFlip maps x' = W - x, so every flipped training image would
+otherwise have its boxes 1 original pixel off.
 patch(): after Ultralytics flips the boxes, shift them by -1 ORIGINAL pixel along the flipped axis (= -r training px, r = letterbox
 resize ratio = min(img_h / h0, img_w / w0)); images are flipped exactly as before. Use with flipud 0.5 (variant 'flipconv')."""
 import numpy as np

@@ -236,7 +236,7 @@ class CascadeRoIHeads(RoIHeads):
     class logits of both stages are averaged (mmdetection: _refine_roi) and boxes come from stage 2. Kept from
     torchvision rather than mmdetection: smooth-L1 beta 1/9 and default initialisation, as in stage 1."""
     stage2_iou, stage2_weights, stage2_loss_weight = 0.6, (20.0, 20.0, 10.0, 10.0), 0.5
-    test_boxes, test_logits = 'stage2', 'mean'  # inference-only ablations (tools/infer.py); defaults = the method
+    test_boxes, test_logits = 'stage2', 'mean'  # inference-only ablations; defaults = the method
     test_iou_score = True  # --iou-score runs only; False = class probability alone (ablation)
     sigma_t, test_var_vote = 0.02, True  # --kl-loss runs only: "We set σt to 0.02" (1809.08545); False = no voting
     partial_label = False  # --partial-label: partial_label_ce for both stages' classification losses
