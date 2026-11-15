@@ -1,7 +1,7 @@
 # CS701 Team 1: SAR classification and detection
 
 This repository holds the code and checkpoints behind our CS701 final report (SMU, AY2026-27 Term 1). Our model is the
-Ultralytics YOLO26l-P2 detector trained without mosaic and scale jitter, with boxes flipped by the dataset's own formula and with
+Ultralytics YOLO26l-P2 detector trained without mosaic and scale jitter, with boxes flipped by the dataset's own flip convention and with
 the KL box loss. The image class is the class whose boxes have the largest total score. It scored a Δm of 54.24 on the validation
 leaderboard (5th of 9 teams) and 58.26 on the test leaderboard (6th).
 
@@ -94,7 +94,7 @@ python tools/score_yolo_holdout.py runs/yolo_kl/weights/last_stripped.pt --data 
 | YOLO26l-P2 | 0.422 | 0.290 | 0.500 | 0.467 |
 | mosaic and scale jitter off | 0.472 | 0.269 | 0.557 | 0.596 |
 | + KL box loss | 0.479 | 0.273 | 0.571 | 0.591 |
-| + flip formula | 0.516 | 0.313 | 0.608 | 0.652 |
+| + flip convention | 0.516 | 0.313 | 0.608 | 0.652 |
 | + 144 epochs (submitted) | 0.538 | 0.301 | 0.627 | 0.708 |
 | brightness and shift off, 24 epochs | 0.559 | 0.307 | 0.643 | 0.758 |
 | brightness and shift off, 48 epochs | 0.564 | 0.310 | 0.644 | 0.771 |
@@ -120,7 +120,7 @@ match / overlapping crop / near-duplicate. The held-out groups were made earlier
 on the validation set it agrees with this script on the no-match group (587 against 581 images) but divides the rest differently
 between crops and near-duplicates.
 
-## 5. The dataset's flip formula
+## 5. The dataset's flip convention
 
 ```
 python analysis/flip_convention.py --data data/holdout15_seed0
@@ -136,7 +136,7 @@ its inputs were not kept, so the pairs are stored here as data.
 
 ```
 weights/    the two final checkpoints
-yolo/       train_variants.py (training recipe), kl_mod.py (KL box loss), flipconv_mod.py (dataset flip formula)
+yolo/       train_variants.py (training recipe), kl_mod.py (KL box loss), flipconv_mod.py (dataset flip convention)
 tools/      make_holdout.py, make_yolo_data.py, score_yolo_holdout.py, predict_submission_yolo.py,
             analyze.py (AP code used by chain_metrics.py), holdout15_seed0_scene_groups.json
 analysis/   chain_metrics.py, overlap_groups.py, flip_convention.py, results/ (stored outputs)
